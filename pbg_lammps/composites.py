@@ -18,56 +18,42 @@ def make_lammps_document(
     target_press=0.0,
     pdamp=5.0,
     seed=87287,
+    setup_commands='',
     interval=1.0,
 ):
     """Create a composite document for a LAMMPS molecular dynamics simulation.
 
     Returns a document dict ready for use with Composite().
 
-    Args:
-        num_atoms_per_dim: Lattice repeats per dimension
-        density: Number density for lattice command
-        lattice_style: Lattice type ('sc', 'fcc', 'bcc')
-        temperature: Initial temperature
-        timestep: Integration timestep (LJ units)
-        pair_style: LAMMPS pair style
-        epsilon: LJ energy parameter
-        sigma: LJ length parameter
-        cutoff: Pair interaction cutoff
-        mass: Atom mass
-        ensemble: Integration ensemble ('nve', 'nvt', 'npt')
-        target_temp: Target temperature for NVT/NPT
-        tdamp: Thermostat damping parameter
-        target_press: Target pressure for NPT
-        pdamp: Barostat damping parameter
-        seed: Random seed
-        interval: Time interval between process updates
-
-    Returns:
-        dict: Composite document with LAMMPS process, stores, and emitter
+    For simple single-type LJ simulations, use the individual parameters.
+    For complex setups (multi-type, custom potentials, fix deform, 2D),
+    pass a raw LAMMPS script via setup_commands.
     """
+    config = {
+        'num_atoms_per_dim': num_atoms_per_dim,
+        'density': density,
+        'lattice_style': lattice_style,
+        'temperature': temperature,
+        'timestep': timestep,
+        'pair_style': pair_style,
+        'epsilon': epsilon,
+        'sigma': sigma,
+        'cutoff': cutoff,
+        'mass': mass,
+        'ensemble': ensemble,
+        'target_temp': target_temp,
+        'tdamp': tdamp,
+        'target_press': target_press,
+        'pdamp': pdamp,
+        'seed': seed,
+        'setup_commands': setup_commands,
+    }
+
     return {
         'lammps': {
             '_type': 'process',
             'address': 'local:LAMMPSProcess',
-            'config': {
-                'num_atoms_per_dim': num_atoms_per_dim,
-                'density': density,
-                'lattice_style': lattice_style,
-                'temperature': temperature,
-                'timestep': timestep,
-                'pair_style': pair_style,
-                'epsilon': epsilon,
-                'sigma': sigma,
-                'cutoff': cutoff,
-                'mass': mass,
-                'ensemble': ensemble,
-                'target_temp': target_temp,
-                'tdamp': tdamp,
-                'target_press': target_press,
-                'pdamp': pdamp,
-                'seed': seed,
-            },
+            'config': config,
             'interval': interval,
             'inputs': {},
             'outputs': {
@@ -79,6 +65,12 @@ def make_lammps_document(
                 'num_atoms': ['stores', 'num_atoms'],
                 'positions': ['stores', 'positions'],
                 'velocities': ['stores', 'velocities'],
+                'atom_types': ['stores', 'atom_types'],
+                'volume': ['stores', 'volume'],
+                'pxx': ['stores', 'pxx'],
+                'pyy': ['stores', 'pyy'],
+                'pzz': ['stores', 'pzz'],
+                'box_dimensions': ['stores', 'box_dimensions'],
             },
         },
         'stores': {},
@@ -92,6 +84,7 @@ def make_lammps_document(
                     'kinetic_energy': 'float',
                     'total_energy': 'float',
                     'pressure': 'float',
+                    'volume': 'float',
                     'time': 'float',
                 },
             },
@@ -101,6 +94,7 @@ def make_lammps_document(
                 'kinetic_energy': ['stores', 'kinetic_energy'],
                 'total_energy': ['stores', 'total_energy'],
                 'pressure': ['stores', 'pressure'],
+                'volume': ['stores', 'volume'],
                 'time': ['global_time'],
             },
         },

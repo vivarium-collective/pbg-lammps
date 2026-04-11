@@ -1,9 +1,14 @@
 """Demo: LAMMPS multi-configuration molecular dynamics report.
 
-Runs three distinct MD simulations (LJ gas NVE, LJ liquid NVT, crystal
-melting NVT), generates interactive 3D particle viewers with Three.js,
-Plotly charts, bigraph-viz architecture diagrams, and navigatable PBG
-document trees — all in a single self-contained HTML.
+Runs four canonical MD simulations demonstrating LAMMPS's range:
+  1. Kob-Andersen binary glass former (NVT quench, multi-type)
+  2. Uniaxial tensile deformation of FCC crystal (fix deform, mechanics)
+  3. 2D hexatic melting (2D physics, phase transition)
+  4. Isobaric compression (NPT, equation of state)
+
+Generates interactive 3D/2D particle viewers with Three.js,
+Plotly charts, bigraph-viz architecture diagrams, and navigatable
+PBG document trees — all in a single self-contained HTML.
 """
 
 import json
@@ -21,86 +26,177 @@ from pbg_lammps.composites import make_lammps_document
 
 CONFIGS = [
     {
-        'id': 'gas_nve',
-        'title': 'Lennard-Jones Gas (NVE)',
-        'subtitle': 'Dilute gas with microcanonical energy conservation',
+        'id': 'glass',
+        'title': 'Kob-Andersen Binary Glass Former',
+        'subtitle': 'Two-component LJ mixture quenched through the glass transition',
         'description': (
-            'A dilute Lennard-Jones gas on a simple cubic lattice at low density '
-            '(rho=0.3) evolves under NVE dynamics. With no thermostat, total energy '
-            'is conserved while kinetic and potential energy exchange freely. '
-            'This demonstrates the symplectic Verlet integrator preserving the '
-            'Hamiltonian in a gas-phase system.'
+            'The Kob-Andersen model is the canonical glass-forming system in '
+            'computational physics. An 80:20 binary mixture of large (A) and '
+            'small (B) Lennard-Jones particles with non-additive cross-interactions '
+            '(epsilon_AB = 1.5) frustrates crystallization. Starting from a '
+            'high-temperature liquid (T=2.0), the system is quenched to T=0.4 — '
+            'below the mode-coupling temperature T_c ~ 0.435. The dynamics slow '
+            'dramatically as the system falls out of equilibrium into a glassy state, '
+            'visible as a plateau in the potential energy.'
         ),
         'config': {
-            'num_atoms_per_dim': 6,
-            'density': 0.3,
-            'lattice_style': 'sc',
-            'temperature': 2.0,
+            'setup_commands': (
+                "units lj\n"
+                "atom_style atomic\n"
+                "dimension 3\n"
+                "boundary p p p\n"
+                "lattice fcc 1.2\n"
+                "region box block 0 6 0 6 0 6\n"
+                "create_box 2 box\n"
+                "create_atoms 1 box\n"
+                "mass 1 1.0\n"
+                "mass 2 1.0\n"
+                "set type 1 type/fraction 2 0.2 48392\n"
+                "pair_style lj/cut 2.5\n"
+                "pair_coeff 1 1 1.0 1.0 2.5\n"
+                "pair_coeff 1 2 1.5 0.8 2.0\n"
+                "pair_coeff 2 2 0.5 0.88 2.2\n"
+                "pair_modify shift yes\n"
+                "velocity all create 2.0 87287 dist gaussian\n"
+                "timestep 0.005\n"
+                "fix integ all nvt temp 2.0 0.4 1.0\n"
+            ),
             'timestep': 0.005,
-            'cutoff': 2.5,
-            'ensemble': 'nve',
-            'seed': 12345,
         },
-        'n_snapshots': 30,
-        'total_time': 15.0,
-        'camera': [25, 18, 25],
+        'n_snapshots': 40,
+        'total_time': 50.0,
+        'camera': [20, 15, 20],
         'color_scheme': 'indigo',
+        'color_mode': 'type',
+        'is_2d': False,
+        'chart_set': 'glass',
     },
     {
-        'id': 'liquid_nvt',
-        'title': 'Lennard-Jones Liquid (NVT)',
-        'subtitle': 'Dense liquid equilibration with Nose-Hoover thermostat',
+        'id': 'tension',
+        'title': 'Uniaxial Tensile Deformation',
+        'subtitle': 'FCC crystal pulled apart to reveal yield and fracture',
         'description': (
-            'A dense Lennard-Jones liquid (FCC lattice, rho=0.85) is equilibrated '
-            'at T=1.0 using a Nose-Hoover thermostat. The system starts from a '
-            'perfect crystal and rapidly disorders into a liquid phase. The '
-            'thermostat controls temperature fluctuations while allowing natural '
-            'pressure and energy evolution.'
+            'A Lennard-Jones FCC crystal (elongated 6x6x12 unit cells, 1728 atoms) '
+            'is equilibrated at low temperature (T=0.01) then subjected to uniaxial '
+            'tensile strain in the z-direction at a constant engineering strain rate. '
+            'The simulation captures the full mechanical response: linear elastic '
+            'regime, yield point, plastic flow with dislocation activity, and '
+            'ultimately void nucleation and fracture. The stress-strain curve and '
+            'per-atom kinetic energy reveal where deformation localizes.'
         ),
         'config': {
-            'num_atoms_per_dim': 5,
-            'density': 0.85,
-            'lattice_style': 'fcc',
-            'temperature': 1.5,
-            'timestep': 0.005,
-            'cutoff': 2.5,
-            'ensemble': 'nvt',
-            'target_temp': 1.0,
-            'tdamp': 0.5,
-            'seed': 54321,
+            'setup_commands': (
+                "units lj\n"
+                "atom_style atomic\n"
+                "dimension 3\n"
+                "boundary p p p\n"
+                "lattice fcc 1.0\n"
+                "region box block 0 6 0 6 0 12\n"
+                "create_box 1 box\n"
+                "create_atoms 1 box\n"
+                "mass 1 1.0\n"
+                "pair_style lj/cut 2.5\n"
+                "pair_coeff 1 1 1.0 1.0\n"
+                "pair_modify shift yes\n"
+                "velocity all create 0.01 54321 dist gaussian\n"
+                "timestep 0.002\n"
+                "fix integ all nvt temp 0.01 0.01 0.5\n"
+            ),
+            'timestep': 0.002,
         },
-        'n_snapshots': 30,
-        'total_time': 25.0,
-        'camera': [18, 13, 18],
-        'color_scheme': 'emerald',
-    },
-    {
-        'id': 'melt',
-        'title': 'Crystal Melting (NVT)',
-        'subtitle': 'FCC crystal superheated above the melting point',
-        'description': (
-            'An FCC crystal at moderate density (rho=0.80) is superheated to '
-            'T=2.5, well above the LJ melting temperature (~0.7). The ordered '
-            'lattice structure rapidly breaks down as atoms gain enough kinetic '
-            'energy to escape their lattice sites. This demonstrates the '
-            'solid-to-liquid phase transition in a classical system.'
-        ),
-        'config': {
-            'num_atoms_per_dim': 5,
-            'density': 0.80,
-            'lattice_style': 'fcc',
-            'temperature': 0.5,
-            'timestep': 0.005,
-            'cutoff': 2.5,
-            'ensemble': 'nvt',
-            'target_temp': 2.5,
-            'tdamp': 0.5,
-            'seed': 99999,
-        },
-        'n_snapshots': 30,
-        'total_time': 30.0,
-        'camera': [18, 13, 18],
+        'equilibrate_time': 2.0,
+        'deform_command': 'fix pull all deform 1 z erate 0.01',
+        'n_snapshots': 40,
+        'total_time': 40.0,
+        'camera': [20, 15, 35],
         'color_scheme': 'rose',
+        'color_mode': 'speed',
+        'is_2d': False,
+        'chart_set': 'tension',
+    },
+    {
+        'id': 'hexatic',
+        'title': '2D Hexatic Melting',
+        'subtitle': 'Kosterlitz-Thouless-Halperin-Nelson-Young transition in 2D',
+        'description': (
+            'A 2D system of Lennard-Jones particles on a hexagonal lattice is '
+            'heated from T=0.1 through the KTHNY melting transition. In 2D, melting '
+            'proceeds via two continuous transitions: solid -> hexatic -> isotropic '
+            'liquid, mediated by unbinding of topological defects (dislocations and '
+            'disclinations). Watch the ordered hexagonal lattice progressively '
+            'disorder as temperature rises, with the hexatic phase characterized by '
+            'orientational order without translational order.'
+        ),
+        'config': {
+            'setup_commands': (
+                "units lj\n"
+                "atom_style atomic\n"
+                "dimension 2\n"
+                "boundary p p p\n"
+                "lattice hex 0.88\n"
+                "region box block 0 25 0 25 -0.5 0.5\n"
+                "create_box 1 box\n"
+                "create_atoms 1 box\n"
+                "mass 1 1.0\n"
+                "pair_style lj/cut 2.5\n"
+                "pair_coeff 1 1 1.0 1.0\n"
+                "pair_modify shift yes\n"
+                "velocity all create 0.1 12345 dist gaussian\n"
+                "timestep 0.005\n"
+                "fix integ all nvt temp 0.1 1.2 1.0\n"
+                "fix enforce all enforce2d\n"
+            ),
+            'timestep': 0.005,
+        },
+        'n_snapshots': 40,
+        'total_time': 60.0,
+        'camera': [12.5, 12.5, 35],
+        'camera_target': [12.5, 12.5, 0],
+        'color_scheme': 'emerald',
+        'color_mode': 'speed',
+        'is_2d': True,
+        'chart_set': 'standard',
+    },
+    {
+        'id': 'compress',
+        'title': 'Isobaric Compression',
+        'subtitle': 'NPT equation of state from gas to dense liquid',
+        'description': (
+            'An FCC Lennard-Jones system at moderate temperature (T=1.5) is '
+            'progressively compressed from near-zero pressure to P=25 using the '
+            'NPT ensemble with a Nose-Hoover barostat. The simulation box shrinks '
+            'isotropically as the system traverses the equation of state from a '
+            'low-density gas/expanded liquid through the coexistence region to a '
+            'dense compressed liquid. The volume and density evolve continuously, '
+            'and the particle viewer shows the box contracting in real time.'
+        ),
+        'config': {
+            'setup_commands': (
+                "units lj\n"
+                "atom_style atomic\n"
+                "dimension 3\n"
+                "boundary p p p\n"
+                "lattice fcc 0.55\n"
+                "region box block 0 7 0 7 0 7\n"
+                "create_box 1 box\n"
+                "create_atoms 1 box\n"
+                "mass 1 1.0\n"
+                "pair_style lj/cut 2.5\n"
+                "pair_coeff 1 1 1.0 1.0\n"
+                "pair_modify shift yes\n"
+                "velocity all create 1.5 99999 dist gaussian\n"
+                "timestep 0.005\n"
+                "fix integ all npt temp 1.5 1.5 0.5 iso 0.0 25.0 5.0\n"
+            ),
+            'timestep': 0.005,
+        },
+        'n_snapshots': 40,
+        'total_time': 50.0,
+        'camera': [25, 18, 25],
+        'color_scheme': 'amber',
+        'color_mode': 'speed',
+        'is_2d': False,
+        'chart_set': 'npt',
     },
 ]
 
@@ -113,6 +209,12 @@ def run_simulation(cfg_entry):
     t0 = _time.perf_counter()
     proc = LAMMPSProcess(config=cfg_entry['config'], core=core)
     state0 = proc.initial_state()
+
+    # Handle tension: equilibrate first, then add deformation
+    if 'equilibrate_time' in cfg_entry:
+        eq_time = cfg_entry['equilibrate_time']
+        proc.update({}, interval=eq_time)
+        proc._lmp.command(cfg_entry['deform_command'])
 
     interval = cfg_entry['total_time'] / cfg_entry['n_snapshots']
     snapshots = [_snap(0.0, state0)]
@@ -133,12 +235,18 @@ def _snap(t, s):
         'time': t,
         'positions': s['positions'],
         'velocities': s['velocities'],
+        'atom_types': s['atom_types'],
         'temperature': s['temperature'],
         'potential_energy': s['potential_energy'],
         'kinetic_energy': s['kinetic_energy'],
         'total_energy': s['total_energy'],
         'pressure': s['pressure'],
         'num_atoms': s['num_atoms'],
+        'volume': s['volume'],
+        'pxx': s['pxx'],
+        'pyy': s['pyy'],
+        'pzz': s['pzz'],
+        'box_dimensions': s['box_dimensions'],
     }
 
 
@@ -150,8 +258,6 @@ def generate_bigraph_image(cfg_entry):
         'lammps': {
             '_type': 'process',
             'address': 'local:LAMMPSProcess',
-            'config': {k: v for k, v in cfg_entry['config'].items()
-                       if k in ('ensemble', 'density', 'temperature')},
             'interval': cfg_entry['total_time'] / cfg_entry['n_snapshots'],
             'inputs': {},
             'outputs': {
@@ -159,6 +265,7 @@ def generate_bigraph_image(cfg_entry):
                 'total_energy': ['stores', 'total_energy'],
                 'pressure': ['stores', 'pressure'],
                 'positions': ['stores', 'positions'],
+                'volume': ['stores', 'volume'],
             },
         },
         'stores': {},
@@ -169,12 +276,14 @@ def generate_bigraph_image(cfg_entry):
                 'temperature': 'float',
                 'total_energy': 'float',
                 'pressure': 'float',
+                'volume': 'float',
                 'time': 'float',
             }},
             'inputs': {
                 'temperature': ['stores', 'temperature'],
                 'total_energy': ['stores', 'total_energy'],
                 'pressure': ['stores', 'pressure'],
+                'volume': ['stores', 'volume'],
                 'time': ['global_time'],
             },
         },
@@ -209,14 +318,8 @@ def build_pbg_document(cfg_entry):
     """Build the PBG composite document dict for display."""
     cfg = cfg_entry['config']
     doc = make_lammps_document(
-        num_atoms_per_dim=cfg.get('num_atoms_per_dim', 5),
-        density=cfg.get('density', 0.6),
-        lattice_style=cfg.get('lattice_style', 'sc'),
-        temperature=cfg.get('temperature', 1.0),
+        setup_commands=cfg.get('setup_commands', ''),
         timestep=cfg.get('timestep', 0.005),
-        ensemble=cfg.get('ensemble', 'nve'),
-        target_temp=cfg.get('target_temp', 1.0),
-        tdamp=cfg.get('tdamp', 0.5),
         interval=cfg_entry['total_time'] / cfg_entry['n_snapshots'],
     )
     return doc
@@ -229,6 +332,8 @@ COLOR_SCHEMES = {
                 'bg': '#ecfdf5', 'accent': '#34d399', 'text': '#064e3b'},
     'rose': {'primary': '#f43f5e', 'light': '#ffe4e6', 'dark': '#e11d48',
              'bg': '#fff1f2', 'accent': '#fb7185', 'text': '#881337'},
+    'amber': {'primary': '#f59e0b', 'light': '#fef3c7', 'dark': '#d97706',
+              'bg': '#fffbeb', 'accent': '#fbbf24', 'text': '#78350f'},
 }
 
 
@@ -242,8 +347,11 @@ def generate_html(sim_results, output_path):
         sid = cfg['id']
         cs = COLOR_SCHEMES[cfg['color_scheme']]
         n_atoms = snapshots[0]['num_atoms']
+        is_2d = cfg.get('is_2d', False)
+        color_mode = cfg.get('color_mode', 'speed')
+        chart_set = cfg.get('chart_set', 'standard')
 
-        # Compute speed stats
+        # Compute speed stats for colorbar
         all_speeds = []
         for s in snapshots:
             vels = np.array(s['velocities'])
@@ -252,6 +360,11 @@ def generate_html(sim_results, output_path):
         speed_min = float(np.percentile(all_speeds, 2))
         speed_max = float(np.percentile(all_speeds, 98))
 
+        # Count atom types
+        type_counts = {}
+        for t in snapshots[0]['atom_types']:
+            type_counts[t] = type_counts.get(t, 0) + 1
+
         # Time series
         times = [s['time'] for s in snapshots]
         temps = [s['temperature'] for s in snapshots]
@@ -259,8 +372,18 @@ def generate_html(sim_results, output_path):
         ke = [s['kinetic_energy'] for s in snapshots]
         etotal = [s['total_energy'] for s in snapshots]
         press = [s['pressure'] for s in snapshots]
+        vols = [s['volume'] for s in snapshots]
+        pzz_vals = [s['pzz'] for s in snapshots]
+        lz_vals = [s['box_dimensions'][2] for s in snapshots]
 
-        # JS data — only send positions and speeds per snapshot (not full velocities)
+        # Strain for tension
+        lz0 = lz_vals[0]
+        strains = [(lz - lz0) / lz0 * 100 for lz in lz_vals]
+
+        # Density from volume
+        densities = [n_atoms / v if v > 0 else 0 for v in vols]
+
+        # JS data
         js_snapshots = []
         for s in snapshots:
             vels = np.array(s['velocities'])
@@ -269,17 +392,25 @@ def generate_html(sim_results, output_path):
                 'time': s['time'],
                 'positions': s['positions'],
                 'speeds': speeds,
+                'types': s['atom_types'],
+                'box': s['box_dimensions'],
             })
 
         all_js_data[sid] = {
             'snapshots': js_snapshots,
             'speed_range': [speed_min, speed_max],
             'camera': cfg['camera'],
+            'camera_target': cfg.get('camera_target', None),
+            'color_mode': color_mode,
+            'is_2d': is_2d,
             'charts': {
                 'times': times, 'temperature': temps,
                 'pe': pe, 'ke': ke, 'etotal': etotal,
-                'pressure': press,
+                'pressure': press, 'volume': vols,
+                'pzz': pzz_vals, 'strain': strains,
+                'density': densities,
             },
+            'chart_set': chart_set,
         }
 
         # Bigraph PNG
@@ -289,10 +420,37 @@ def generate_html(sim_results, output_path):
         # PBG document JSON
         pbg_doc = build_pbg_document(cfg)
 
-        # Summary stats
+        # Metrics
         t0_val, t1_val = temps[0], temps[-1]
         e0_val, e1_val = etotal[0], etotal[-1]
-        e_drift = abs(e1_val - e0_val) / max(abs(e0_val), 1e-10) * 100
+        type_str = ', '.join(f'type {k}: {v}' for k, v in sorted(type_counts.items()))
+
+        # Colorbar info
+        if color_mode == 'type':
+            cb_title = 'Atom Type'
+            cb_top = f'B (n={type_counts.get(2, 0)})'
+            cb_bot = f'A (n={type_counts.get(1, 0)})'
+            cb_gradient = 'linear-gradient(to bottom, #f43f5e, #6366f1)'
+        else:
+            cb_title = 'Speed |v|'
+            cb_top = f'{speed_max:.2f}'
+            cb_bot = f'{speed_min:.2f}'
+            cb_gradient = 'linear-gradient(to bottom, #e61a0d, #e6c01a, #4dd94d, #12b5c9, #3112cc)'
+
+        # Per-config metrics row
+        dim_label = '2D' if is_2d else '3D'
+        metrics = f"""
+        <div class="metric"><span class="metric-label">Atoms</span><span class="metric-value">{n_atoms:,}</span></div>
+        <div class="metric"><span class="metric-label">Dimension</span><span class="metric-value">{dim_label}</span></div>
+        <div class="metric"><span class="metric-label">T (init &rarr; final)</span><span class="metric-value">{t0_val:.2f} &rarr; {t1_val:.2f}</span></div>
+        <div class="metric"><span class="metric-label">PE (final)</span><span class="metric-value">{pe[-1]:.2f}</span></div>
+        <div class="metric"><span class="metric-label">P (final)</span><span class="metric-value">{press[-1]:.1f}</span></div>
+        <div class="metric"><span class="metric-label">Snapshots</span><span class="metric-value">{len(snapshots)}</span></div>
+        <div class="metric"><span class="metric-label">Runtime</span><span class="metric-value">{runtime:.1f}s</span></div>
+"""
+
+        canvas_class = 'particle-canvas-2d' if is_2d else 'particle-canvas'
+        viewer_hint = 'Drag to pan &middot; Scroll to zoom' if is_2d else 'Drag to rotate &middot; Scroll to zoom'
 
         section = f"""
     <div class="sim-section" id="sim-{sid}">
@@ -305,28 +463,20 @@ def generate_html(sim_results, output_path):
       </div>
       <p class="sim-description">{cfg['description']}</p>
 
-      <div class="metrics-row">
-        <div class="metric"><span class="metric-label">Atoms</span><span class="metric-value">{n_atoms:,}</span></div>
-        <div class="metric"><span class="metric-label">Ensemble</span><span class="metric-value">{cfg['config']['ensemble'].upper()}</span></div>
-        <div class="metric"><span class="metric-label">Temp (final)</span><span class="metric-value">{t1_val:.3f}</span><span class="metric-sub">{t0_val:.2f} &rarr; {t1_val:.2f}</span></div>
-        <div class="metric"><span class="metric-label">Total Energy</span><span class="metric-value">{e1_val:.3f}</span></div>
-        <div class="metric"><span class="metric-label">E Drift</span><span class="metric-value">{e_drift:.2f}%</span></div>
-        <div class="metric"><span class="metric-label">Snapshots</span><span class="metric-value">{len(snapshots)}</span></div>
-        <div class="metric"><span class="metric-label">Runtime</span><span class="metric-value">{runtime:.1f}s</span></div>
-      </div>
+      <div class="metrics-row">{metrics}</div>
 
-      <h3 class="subsection-title">3D Particle Viewer</h3>
+      <h3 class="subsection-title">{'2D' if is_2d else '3D'} Particle Viewer</h3>
       <div class="viewer-wrap">
-        <canvas id="canvas-{sid}" class="particle-canvas"></canvas>
+        <canvas id="canvas-{sid}" class="{canvas_class}"></canvas>
         <div class="viewer-info">
-          <strong>{n_atoms}</strong> atoms &middot; {cfg['config']['lattice_style'].upper()} lattice<br>
-          Drag to rotate &middot; Scroll to zoom
+          <strong>{n_atoms}</strong> atoms &middot; {type_str}<br>
+          {viewer_hint}
         </div>
         <div class="colorbar-box">
-          <div class="cb-title">Speed |v|</div>
-          <div class="cb-val">{speed_max:.2f}</div>
-          <div class="cb-gradient"></div>
-          <div class="cb-val">{speed_min:.2f}</div>
+          <div class="cb-title">{cb_title}</div>
+          <div class="cb-val">{cb_top}</div>
+          <div class="cb-gradient" style="background:{cb_gradient};"></div>
+          <div class="cb-val">{cb_bot}</div>
         </div>
         <div class="slider-controls">
           <button class="play-btn" style="border-color:{cs['primary']}; color:{cs['primary']};" onclick="togglePlay('{sid}')">Play</button>
@@ -339,10 +489,10 @@ def generate_html(sim_results, output_path):
 
       <h3 class="subsection-title">Thermodynamics</h3>
       <div class="charts-row">
-        <div class="chart-box"><div id="chart-energy-{sid}" class="chart"></div></div>
-        <div class="chart-box"><div id="chart-components-{sid}" class="chart"></div></div>
-        <div class="chart-box"><div id="chart-temp-{sid}" class="chart"></div></div>
-        <div class="chart-box"><div id="chart-press-{sid}" class="chart"></div></div>
+        <div class="chart-box"><div id="chart-a-{sid}" class="chart"></div></div>
+        <div class="chart-box"><div id="chart-b-{sid}" class="chart"></div></div>
+        <div class="chart-box"><div id="chart-c-{sid}" class="chart"></div></div>
+        <div class="chart-box"><div id="chart-d-{sid}" class="chart"></div></div>
       </div>
 
       <div class="pbg-row">
@@ -390,11 +540,12 @@ body {{ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-seri
 }}
 .page-header h1 {{ font-size:2.2rem; font-weight:800; color:#0f172a; margin-bottom:.3rem; }}
 .page-header p {{ color:#64748b; font-size:.95rem; max-width:700px; }}
-.nav {{ display:flex; gap:.8rem; padding:1rem 3rem; background:#f8fafc;
-        border-bottom:1px solid #e2e8f0; position:sticky; top:0; z-index:100; }}
-.nav-link {{ padding:.4rem 1rem; border-radius:8px; border:1.5px solid;
-             text-decoration:none; font-size:.85rem; font-weight:600;
-             transition:all .15s; }}
+.nav {{ display:flex; gap:.6rem; padding:.8rem 3rem; background:#f8fafc;
+        border-bottom:1px solid #e2e8f0; position:sticky; top:0; z-index:100;
+        flex-wrap:wrap; }}
+.nav-link {{ padding:.4rem .8rem; border-radius:8px; border:1.5px solid;
+             text-decoration:none; font-size:.8rem; font-weight:600;
+             transition:all .15s; white-space:nowrap; }}
 .nav-link:hover {{ transform:translateY(-1px); box-shadow:0 2px 8px rgba(0,0,0,.08); }}
 .sim-section {{ padding:2.5rem 3rem; border-bottom:1px solid #e2e8f0; }}
 .sim-header {{ display:flex; align-items:center; gap:1rem; margin-bottom:.8rem;
@@ -412,12 +563,14 @@ body {{ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-seri
            padding:.8rem; text-align:center; }}
 .metric-label {{ display:block; font-size:.7rem; text-transform:uppercase;
                  letter-spacing:.06em; color:#94a3b8; margin-bottom:.2rem; }}
-.metric-value {{ display:block; font-size:1.3rem; font-weight:700; color:#1e293b; }}
+.metric-value {{ display:block; font-size:1.15rem; font-weight:700; color:#1e293b; }}
 .metric-sub {{ display:block; font-size:.7rem; color:#94a3b8; }}
 .viewer-wrap {{ position:relative; background:#0f172a; border:1px solid #334155;
                 border-radius:14px; overflow:hidden; margin-bottom:1rem; }}
-.particle-canvas {{ width:100%; height:500px; display:block; cursor:grab; }}
+.particle-canvas {{ width:100%; height:520px; display:block; cursor:grab; }}
 .particle-canvas:active {{ cursor:grabbing; }}
+.particle-canvas-2d {{ width:100%; height:520px; display:block; cursor:grab; }}
+.particle-canvas-2d:active {{ cursor:grabbing; }}
 .viewer-info {{ position:absolute; top:.8rem; left:.8rem; background:rgba(15,23,42,.85);
                 border:1px solid #334155; border-radius:8px; padding:.5rem .8rem;
                 font-size:.75rem; color:#94a3b8; backdrop-filter:blur(4px); }}
@@ -427,9 +580,8 @@ body {{ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-seri
                  display:flex; flex-direction:column; align-items:center; gap:.2rem;
                  backdrop-filter:blur(4px); }}
 .cb-title {{ font-size:.65rem; text-transform:uppercase; letter-spacing:.04em; color:#94a3b8; }}
-.cb-gradient {{ width:16px; height:100px; border-radius:3px;
-  background:linear-gradient(to bottom, #e61a0d, #e6c01a, #4dd94d, #12b5c9, #3112cc); }}
-.cb-val {{ font-size:.65rem; color:#64748b; }}
+.cb-gradient {{ width:16px; height:100px; border-radius:3px; }}
+.cb-val {{ font-size:.65rem; color:#64748b; text-align:center; max-width:80px; }}
 .slider-controls {{ position:absolute; bottom:0; left:0; right:0;
                     background:linear-gradient(transparent,rgba(15,23,42,.95));
                     padding:1.5rem 1.5rem 1rem; display:flex; align-items:center; gap:.8rem; }}
@@ -464,6 +616,7 @@ body {{ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-seri
 @media(max-width:900px) {{
   .charts-row,.pbg-row {{ grid-template-columns:1fr; }}
   .sim-section,.page-header {{ padding:1.5rem; }}
+  .nav {{ padding:.6rem 1rem; }}
 }}
 </style>
 </head>
@@ -471,9 +624,9 @@ body {{ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-seri
 
 <div class="page-header">
   <h1>LAMMPS Molecular Dynamics Report</h1>
-  <p>Three molecular dynamics simulations wrapped as <strong>process-bigraph</strong>
-  Processes using the LAMMPS engine. Each configuration demonstrates a distinct
-  thermodynamic scenario with interactive 3D particle visualization.</p>
+  <p>Four canonical molecular dynamics simulations wrapped as <strong>process-bigraph</strong>
+  Processes, demonstrating multi-component systems, mechanical deformation, 2D phase
+  transitions, and equation-of-state compression.</p>
 </div>
 
 <div class="nav">{nav_items}</div>
@@ -496,7 +649,7 @@ function renderJson(obj, depth) {{
   if (obj === null) return '<span class="jt-null">null</span>';
   if (typeof obj === 'boolean') return '<span class="jt-bool">' + obj + '</span>';
   if (typeof obj === 'number') return '<span class="jt-num">' + obj + '</span>';
-  if (typeof obj === 'string') return '<span class="jt-str">"' + obj.replace(/</g,'&lt;') + '"</span>';
+  if (typeof obj === 'string') return '<span class="jt-str">"' + obj.replace(/</g,'&lt;').replace(/\\n/g,'\\\\n') + '"</span>';
   if (Array.isArray(obj)) {{
     if (obj.length === 0) return '<span class="jt-bracket">[]</span>';
     if (obj.length <= 5 && obj.every(x => typeof x !== 'object' || x === null)) {{
@@ -548,12 +701,15 @@ Object.keys(DOCS).forEach(sid => {{
   if (el) el.innerHTML = renderJson(DOCS[sid], 0);
 }});
 
-// ─── Three.js Particle Viewers ───
-const viewers = {{}};
-const playStates = {{}};
+// ─── Color Utilities ───
+const TYPE_COLORS = [
+  new THREE.Color(0.39, 0.40, 0.95),   // type 1: indigo
+  new THREE.Color(0.95, 0.25, 0.37),   // type 2: rose
+  new THREE.Color(0.06, 0.73, 0.51),   // type 3: emerald
+  new THREE.Color(0.96, 0.62, 0.04),   // type 4: amber
+];
 
 function speedToColor(t) {{
-  // Turbo-like: blue -> cyan -> green -> yellow -> red
   t = Math.max(0, Math.min(1, t));
   let r, g, b;
   if (t < 0.25) {{
@@ -572,11 +728,15 @@ function speedToColor(t) {{
   return new THREE.Color(r, g, b);
 }}
 
+// ─── Three.js Particle Viewers ───
+const viewers = {{}};
+const playStates = {{}};
+
 function initViewer(sid) {{
   const d = DATA[sid];
   const canvas = document.getElementById('canvas-' + sid);
   const W = canvas.parentElement.clientWidth;
-  const H = 500;
+  const H = d.is_2d ? 520 : 520;
   canvas.width = W * window.devicePixelRatio;
   canvas.height = H * window.devicePixelRatio;
   canvas.style.width = W + 'px';
@@ -588,16 +748,35 @@ function initViewer(sid) {{
   renderer.setClearColor(0x0f172a);
 
   const scene = new THREE.Scene();
-  const cam = new THREE.PerspectiveCamera(45, W/H, 0.1, 500);
-  cam.position.set(...d.camera);
+
+  let cam;
+  if (d.is_2d) {{
+    const aspect = W / H;
+    const frustum = 16;
+    cam = new THREE.OrthographicCamera(-frustum*aspect, frustum*aspect, frustum, -frustum, 0.1, 500);
+    cam.position.set(d.camera[0], d.camera[1], d.camera[2]);
+    cam.up.set(0, 1, 0);
+  }} else {{
+    cam = new THREE.PerspectiveCamera(45, W/H, 0.1, 500);
+    cam.position.set(...d.camera);
+  }}
 
   const controls = new THREE.OrbitControls(cam, canvas);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
-  controls.autoRotate = true;
-  controls.autoRotateSpeed = 0.6;
+  if (d.is_2d) {{
+    controls.enableRotate = false;
+    controls.autoRotate = false;
+  }} else {{
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 0.6;
+  }}
 
-  scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+  if (d.camera_target) {{
+    controls.target.set(d.camera_target[0], d.camera_target[1], d.camera_target[2]);
+  }}
+
+  scene.add(new THREE.AmbientLight(0xffffff, 0.45));
   const dl1 = new THREE.DirectionalLight(0xffffff, 0.8);
   dl1.position.set(30, 50, 40); scene.add(dl1);
   const dl2 = new THREE.DirectionalLight(0x8b9cc7, 0.3);
@@ -606,26 +785,26 @@ function initViewer(sid) {{
   const snap0 = d.snapshots[0];
   const nAtoms = snap0.positions.length;
 
-  // Compute bounding box center for camera target
-  let cx = 0, cy = 0, cz = 0;
-  for (let i = 0; i < nAtoms; i++) {{
-    cx += snap0.positions[i][0];
-    cy += snap0.positions[i][1];
-    cz += snap0.positions[i][2];
+  // Compute center
+  if (!d.camera_target) {{
+    let cx = 0, cy = 0, cz = 0;
+    for (let i = 0; i < nAtoms; i++) {{
+      cx += snap0.positions[i][0];
+      cy += snap0.positions[i][1];
+      cz += snap0.positions[i][2];
+    }}
+    cx /= nAtoms; cy /= nAtoms; cz /= nAtoms;
+    controls.target.set(cx, cy, cz);
   }}
-  cx /= nAtoms; cy /= nAtoms; cz /= nAtoms;
-  controls.target.set(cx, cy, cz);
 
-  // Use InstancedMesh for efficient particle rendering
-  const sphereGeo = new THREE.SphereGeometry(0.35, 12, 8);
-  const sphereMat = new THREE.MeshPhongMaterial({{
-    shininess: 60, specular: 0x444444,
-  }});
+  // Particle radius
+  const pRadius = d.is_2d ? 0.4 : 0.3;
+  const sphereGeo = new THREE.SphereGeometry(pRadius, d.is_2d ? 16 : 10, d.is_2d ? 8 : 6);
+  const sphereMat = new THREE.MeshPhongMaterial({{ shininess: 60, specular: 0x444444 }});
   const instancedMesh = new THREE.InstancedMesh(sphereGeo, sphereMat, nAtoms);
   scene.add(instancedMesh);
 
   const dummy = new THREE.Object3D();
-  const color = new THREE.Color();
 
   function updateParticles(idx) {{
     const snap = d.snapshots[idx];
@@ -635,8 +814,15 @@ function initViewer(sid) {{
       dummy.updateMatrix();
       instancedMesh.setMatrixAt(i, dummy.matrix);
 
-      const t = (snap.speeds[i] - smin) / (smax - smin + 1e-12);
-      instancedMesh.setColorAt(i, speedToColor(t));
+      let col;
+      if (d.color_mode === 'type') {{
+        const typeIdx = (snap.types[i] || 1) - 1;
+        col = TYPE_COLORS[Math.min(typeIdx, TYPE_COLORS.length - 1)];
+      }} else {{
+        const t = (snap.speeds[i] - smin) / (smax - smin + 1e-12);
+        col = speedToColor(t);
+      }}
+      instancedMesh.setColorAt(i, col);
     }}
     instancedMesh.instanceMatrix.needsUpdate = true;
     instancedMesh.instanceColor.needsUpdate = true;
@@ -644,31 +830,31 @@ function initViewer(sid) {{
 
   updateParticles(0);
 
-  // Bounding box wireframe
-  let xmin=Infinity, ymin=Infinity, zmin=Infinity;
-  let xmax=-Infinity, ymax=-Infinity, zmax=-Infinity;
-  for (let i = 0; i < nAtoms; i++) {{
-    const p = snap0.positions[i];
-    xmin=Math.min(xmin,p[0]); ymin=Math.min(ymin,p[1]); zmin=Math.min(zmin,p[2]);
-    xmax=Math.max(xmax,p[0]); ymax=Math.max(ymax,p[1]); zmax=Math.max(zmax,p[2]);
-  }}
-  const pad = 1.0;
-  const boxGeo = new THREE.BoxGeometry(xmax-xmin+2*pad, ymax-ymin+2*pad, zmax-zmin+2*pad);
+  // Bounding box (updates with snapshots for NPT/deform)
+  const boxGeo = new THREE.BoxGeometry(1, 1, 1);
   const boxEdges = new THREE.EdgesGeometry(boxGeo);
   const boxLine = new THREE.LineSegments(boxEdges,
-    new THREE.LineBasicMaterial({{color:0x475569, transparent:true, opacity:0.4}}));
-  boxLine.position.set((xmin+xmax)/2, (ymin+ymax)/2, (zmin+zmax)/2);
+    new THREE.LineBasicMaterial({{color:0x475569, transparent:true, opacity:0.5}}));
   scene.add(boxLine);
+
+  function updateBox(idx) {{
+    const snap = d.snapshots[idx];
+    const bx = snap.box[0], by = snap.box[1], bz = snap.box[2];
+    boxLine.scale.set(bx, by, d.is_2d ? 0.01 : bz);
+    boxLine.position.set(bx/2, by/2, d.is_2d ? 0 : bz/2);
+  }}
+  updateBox(0);
 
   const slider = document.getElementById('slider-' + sid);
   const tval = document.getElementById('tval-' + sid);
   slider.addEventListener('input', () => {{
     const idx = parseInt(slider.value);
     updateParticles(idx);
-    tval.textContent = 't = ' + d.snapshots[idx].time;
+    updateBox(idx);
+    tval.textContent = 't = ' + d.snapshots[idx].time.toFixed(2);
   }});
 
-  viewers[sid] = {{ renderer, scene, cam, controls, updateParticles, slider, tval }};
+  viewers[sid] = {{ renderer, scene, cam, controls, updateParticles, updateBox, slider, tval }};
   playStates[sid] = {{ playing: false, interval: null }};
 
   function animate() {{
@@ -687,17 +873,18 @@ function togglePlay(sid) {{
   ps.playing = !ps.playing;
   if (ps.playing) {{
     btn.textContent = 'Pause';
-    v.controls.autoRotate = false;
+    if (v.controls.autoRotate !== undefined) v.controls.autoRotate = false;
     ps.interval = setInterval(() => {{
       let idx = parseInt(v.slider.value) + 1;
       if (idx >= d.snapshots.length) idx = 0;
       v.slider.value = idx;
       v.updateParticles(idx);
-      v.tval.textContent = 't = ' + d.snapshots[idx].time;
-    }}, 250);
+      v.updateBox(idx);
+      v.tval.textContent = 't = ' + d.snapshots[idx].time.toFixed(2);
+    }}, 200);
   }} else {{
     btn.textContent = 'Play';
-    v.controls.autoRotate = true;
+    if (!d.is_2d) v.controls.autoRotate = true;
     clearInterval(ps.interval);
   }}
 }}
@@ -718,39 +905,148 @@ const pCfg = {{ responsive:true, displayModeBar:false }};
 
 Object.keys(DATA).forEach(sid => {{
   const c = DATA[sid].charts;
+  const cs = DATA[sid].chart_set;
 
-  Plotly.newPlot('chart-energy-'+sid, [{{
-    x:c.times, y:c.etotal, type:'scatter', mode:'lines+markers',
-    line:{{ color:'#6366f1', width:2 }}, marker:{{ size:4 }},
-  }}], {{...pLayout, title:{{ text:'Total Energy', font:{{ size:12, color:'#334155' }} }},
-    yaxis:{{...pLayout.yaxis, title:{{ text:'Energy', font:{{ size:10 }} }} }}
-  }}, pCfg);
+  if (cs === 'glass') {{
+    // Glass: Temperature quench, PE plateau, Energy components, Pressure
+    Plotly.newPlot('chart-a-'+sid, [{{
+      x:c.times, y:c.temperature, type:'scatter', mode:'lines',
+      line:{{ color:'#6366f1', width:2.5 }},
+    }}], {{...pLayout, title:{{ text:'Temperature (quench)', font:{{ size:12, color:'#334155' }} }},
+      yaxis:{{...pLayout.yaxis, title:{{ text:'T', font:{{ size:10 }} }} }}
+    }}, pCfg);
 
-  Plotly.newPlot('chart-components-'+sid, [
-    {{ x:c.times, y:c.pe, type:'scatter', mode:'lines+markers',
-       line:{{ color:'#6366f1', width:1.5 }}, marker:{{ size:3 }}, name:'Potential' }},
-    {{ x:c.times, y:c.ke, type:'scatter', mode:'lines+markers',
-       line:{{ color:'#f43f5e', width:1.5 }}, marker:{{ size:3 }}, name:'Kinetic' }},
-  ], {{...pLayout, title:{{ text:'Energy Components', font:{{ size:12, color:'#334155' }} }},
-    yaxis:{{...pLayout.yaxis, title:{{ text:'Energy', font:{{ size:10 }} }} }},
-    legend:{{ font:{{ size:9 }}, bgcolor:'rgba(0,0,0,0)' }}, showlegend:true
-  }}, pCfg);
+    Plotly.newPlot('chart-b-'+sid, [{{
+      x:c.times, y:c.pe, type:'scatter', mode:'lines',
+      line:{{ color:'#8b5cf6', width:2.5 }},
+      fill:'tozeroy', fillcolor:'rgba(139,92,246,0.06)',
+    }}], {{...pLayout, title:{{ text:'Potential Energy', font:{{ size:12, color:'#334155' }} }},
+      yaxis:{{...pLayout.yaxis, title:{{ text:'PE', font:{{ size:10 }} }} }}
+    }}, pCfg);
 
-  Plotly.newPlot('chart-temp-'+sid, [{{
-    x:c.times, y:c.temperature, type:'scatter', mode:'lines+markers',
-    line:{{ color:'#10b981', width:2 }}, marker:{{ size:4 }},
-    fill:'tozeroy', fillcolor:'rgba(16,185,129,0.06)',
-  }}], {{...pLayout, title:{{ text:'Temperature', font:{{ size:12, color:'#334155' }} }},
-    yaxis:{{...pLayout.yaxis, title:{{ text:'T (LJ units)', font:{{ size:10 }} }} }}, showlegend:false
-  }}, pCfg);
+    Plotly.newPlot('chart-c-'+sid, [
+      {{ x:c.times, y:c.pe, type:'scatter', mode:'lines',
+         line:{{ color:'#6366f1', width:1.5 }}, name:'PE' }},
+      {{ x:c.times, y:c.ke, type:'scatter', mode:'lines',
+         line:{{ color:'#f43f5e', width:1.5 }}, name:'KE' }},
+      {{ x:c.times, y:c.etotal, type:'scatter', mode:'lines',
+         line:{{ color:'#1e293b', width:2, dash:'dot' }}, name:'Total' }},
+    ], {{...pLayout, title:{{ text:'Energy Components', font:{{ size:12, color:'#334155' }} }},
+      yaxis:{{...pLayout.yaxis, title:{{ text:'Energy', font:{{ size:10 }} }} }},
+      legend:{{ font:{{ size:9 }}, bgcolor:'rgba(0,0,0,0)' }}, showlegend:true
+    }}, pCfg);
 
-  Plotly.newPlot('chart-press-'+sid, [{{
-    x:c.times, y:c.pressure, type:'scatter', mode:'lines+markers',
-    line:{{ color:'#f59e0b', width:2 }}, marker:{{ size:4 }},
-    fill:'tozeroy', fillcolor:'rgba(245,158,11,0.06)',
-  }}], {{...pLayout, title:{{ text:'Pressure', font:{{ size:12, color:'#334155' }} }},
-    yaxis:{{...pLayout.yaxis, title:{{ text:'P (LJ units)', font:{{ size:10 }} }} }}, showlegend:false
-  }}, pCfg);
+    Plotly.newPlot('chart-d-'+sid, [{{
+      x:c.times, y:c.pressure, type:'scatter', mode:'lines',
+      line:{{ color:'#f59e0b', width:2 }},
+    }}], {{...pLayout, title:{{ text:'Pressure', font:{{ size:12, color:'#334155' }} }},
+      yaxis:{{...pLayout.yaxis, title:{{ text:'P', font:{{ size:10 }} }} }}
+    }}, pCfg);
+
+  }} else if (cs === 'tension') {{
+    // Tension: Stress-strain, Energy, Temperature, Box Lz
+    Plotly.newPlot('chart-a-'+sid, [{{
+      x:c.strain, y:c.pzz.map(v => -v), type:'scatter', mode:'lines',
+      line:{{ color:'#f43f5e', width:2.5 }},
+    }}], {{...pLayout,
+      title:{{ text:'Stress-Strain Curve', font:{{ size:12, color:'#334155' }} }},
+      xaxis:{{...pLayout.xaxis, title:{{ text:'Strain (%)', font:{{ size:10 }} }} }},
+      yaxis:{{...pLayout.yaxis, title:{{ text:'-sigma_zz', font:{{ size:10 }} }} }}
+    }}, pCfg);
+
+    Plotly.newPlot('chart-b-'+sid, [
+      {{ x:c.times, y:c.pe, type:'scatter', mode:'lines',
+         line:{{ color:'#6366f1', width:1.5 }}, name:'PE' }},
+      {{ x:c.times, y:c.ke, type:'scatter', mode:'lines',
+         line:{{ color:'#f43f5e', width:1.5 }}, name:'KE' }},
+    ], {{...pLayout, title:{{ text:'Energy Components', font:{{ size:12, color:'#334155' }} }},
+      yaxis:{{...pLayout.yaxis, title:{{ text:'Energy', font:{{ size:10 }} }} }},
+      legend:{{ font:{{ size:9 }}, bgcolor:'rgba(0,0,0,0)' }}, showlegend:true
+    }}, pCfg);
+
+    Plotly.newPlot('chart-c-'+sid, [{{
+      x:c.times, y:c.temperature, type:'scatter', mode:'lines',
+      line:{{ color:'#10b981', width:2 }},
+    }}], {{...pLayout, title:{{ text:'Temperature', font:{{ size:12, color:'#334155' }} }},
+      yaxis:{{...pLayout.yaxis, title:{{ text:'T', font:{{ size:10 }} }} }}
+    }}, pCfg);
+
+    Plotly.newPlot('chart-d-'+sid, [{{
+      x:c.times, y:c.volume, type:'scatter', mode:'lines',
+      line:{{ color:'#8b5cf6', width:2 }},
+      fill:'tozeroy', fillcolor:'rgba(139,92,246,0.06)',
+    }}], {{...pLayout, title:{{ text:'Cell Volume', font:{{ size:12, color:'#334155' }} }},
+      yaxis:{{...pLayout.yaxis, title:{{ text:'V', font:{{ size:10 }} }} }}
+    }}, pCfg);
+
+  }} else if (cs === 'npt') {{
+    // NPT: Volume, Density, Energy, Pressure
+    Plotly.newPlot('chart-a-'+sid, [{{
+      x:c.times, y:c.volume, type:'scatter', mode:'lines',
+      line:{{ color:'#f59e0b', width:2.5 }},
+      fill:'tozeroy', fillcolor:'rgba(245,158,11,0.06)',
+    }}], {{...pLayout, title:{{ text:'Volume', font:{{ size:12, color:'#334155' }} }},
+      yaxis:{{...pLayout.yaxis, title:{{ text:'V', font:{{ size:10 }} }} }}
+    }}, pCfg);
+
+    Plotly.newPlot('chart-b-'+sid, [{{
+      x:c.times, y:c.density, type:'scatter', mode:'lines',
+      line:{{ color:'#6366f1', width:2.5 }},
+    }}], {{...pLayout, title:{{ text:'Number Density', font:{{ size:12, color:'#334155' }} }},
+      yaxis:{{...pLayout.yaxis, title:{{ text:'rho', font:{{ size:10 }} }} }}
+    }}, pCfg);
+
+    Plotly.newPlot('chart-c-'+sid, [
+      {{ x:c.times, y:c.pe, type:'scatter', mode:'lines',
+         line:{{ color:'#6366f1', width:1.5 }}, name:'PE' }},
+      {{ x:c.times, y:c.ke, type:'scatter', mode:'lines',
+         line:{{ color:'#f43f5e', width:1.5 }}, name:'KE' }},
+    ], {{...pLayout, title:{{ text:'Energy Components', font:{{ size:12, color:'#334155' }} }},
+      yaxis:{{...pLayout.yaxis, title:{{ text:'Energy', font:{{ size:10 }} }} }},
+      legend:{{ font:{{ size:9 }}, bgcolor:'rgba(0,0,0,0)' }}, showlegend:true
+    }}, pCfg);
+
+    Plotly.newPlot('chart-d-'+sid, [{{
+      x:c.times, y:c.pressure, type:'scatter', mode:'lines',
+      line:{{ color:'#10b981', width:2 }},
+    }}], {{...pLayout, title:{{ text:'Pressure', font:{{ size:12, color:'#334155' }} }},
+      yaxis:{{...pLayout.yaxis, title:{{ text:'P', font:{{ size:10 }} }} }}
+    }}, pCfg);
+
+  }} else {{
+    // Standard: Total Energy, Components, Temperature, Pressure
+    Plotly.newPlot('chart-a-'+sid, [{{
+      x:c.times, y:c.etotal, type:'scatter', mode:'lines+markers',
+      line:{{ color:'#6366f1', width:2 }}, marker:{{ size:3 }},
+    }}], {{...pLayout, title:{{ text:'Total Energy', font:{{ size:12, color:'#334155' }} }},
+      yaxis:{{...pLayout.yaxis, title:{{ text:'Energy', font:{{ size:10 }} }} }}
+    }}, pCfg);
+
+    Plotly.newPlot('chart-b-'+sid, [
+      {{ x:c.times, y:c.pe, type:'scatter', mode:'lines',
+         line:{{ color:'#6366f1', width:1.5 }}, name:'PE' }},
+      {{ x:c.times, y:c.ke, type:'scatter', mode:'lines',
+         line:{{ color:'#f43f5e', width:1.5 }}, name:'KE' }},
+    ], {{...pLayout, title:{{ text:'Energy Components', font:{{ size:12, color:'#334155' }} }},
+      yaxis:{{...pLayout.yaxis, title:{{ text:'Energy', font:{{ size:10 }} }} }},
+      legend:{{ font:{{ size:9 }}, bgcolor:'rgba(0,0,0,0)' }}, showlegend:true
+    }}, pCfg);
+
+    Plotly.newPlot('chart-c-'+sid, [{{
+      x:c.times, y:c.temperature, type:'scatter', mode:'lines',
+      line:{{ color:'#10b981', width:2 }},
+      fill:'tozeroy', fillcolor:'rgba(16,185,129,0.06)',
+    }}], {{...pLayout, title:{{ text:'Temperature', font:{{ size:12, color:'#334155' }} }},
+      yaxis:{{...pLayout.yaxis, title:{{ text:'T', font:{{ size:10 }} }} }}
+    }}, pCfg);
+
+    Plotly.newPlot('chart-d-'+sid, [{{
+      x:c.times, y:c.pressure, type:'scatter', mode:'lines',
+      line:{{ color:'#f59e0b', width:2 }},
+    }}], {{...pLayout, title:{{ text:'Pressure', font:{{ size:12, color:'#334155' }} }},
+      yaxis:{{...pLayout.yaxis, title:{{ text:'P', font:{{ size:10 }} }} }}
+    }}, pCfg);
+  }}
 }});
 
 </script>
@@ -773,12 +1069,11 @@ def run_demo():
         snapshots, runtime = run_simulation(cfg)
         sim_results.append((cfg, (snapshots, runtime)))
         print(f'  Runtime: {runtime:.2f}s')
-        print(f'  {len(snapshots)} snapshots collected')
+        print(f'  {len(snapshots)} snapshots, {snapshots[0]["num_atoms"]} atoms')
 
     print('Generating HTML report...')
     generate_html(sim_results, output_path)
 
-    # Open in Safari
     subprocess.run(['open', '-a', 'Safari', output_path])
 
 

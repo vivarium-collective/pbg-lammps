@@ -85,6 +85,39 @@ for entry in results[('emitter',)]:
 | `target_press` | float | 0.0 | Barostat target P |
 | `pdamp` | float | 5.0 | Barostat damping |
 | `seed` | int | 87287 | RNG seed |
+| `setup_commands` | string | "" | Raw LAMMPS script (overrides auto-generation) |
+
+### Advanced: Custom LAMMPS Scripts
+
+For complex setups (multi-type systems, custom potentials, fix deform, 2D), pass raw LAMMPS commands via `setup_commands`:
+
+```python
+doc = make_lammps_document(
+    setup_commands="""
+units lj
+atom_style atomic
+dimension 3
+boundary p p p
+lattice fcc 1.2
+region box block 0 6 0 6 0 6
+create_box 2 box
+create_atoms 1 box
+mass 1 1.0
+mass 2 1.0
+set type 1 type/fraction 2 0.2 12345
+pair_style lj/cut 2.5
+pair_coeff 1 1 1.0 1.0 2.5
+pair_coeff 1 2 1.5 0.8 2.0
+pair_coeff 2 2 0.5 0.88 2.2
+pair_modify shift yes
+velocity all create 2.0 87287 dist gaussian
+timestep 0.005
+fix integ all nvt temp 2.0 0.4 1.0
+""",
+    timestep=0.005,
+    interval=1.0,
+)
+```
 
 ## Architecture
 
@@ -96,6 +129,15 @@ The wrapper uses the **bridge pattern**: a single `LAMMPSProcess` owns a LAMMPS 
 
 All outputs use `overwrite` types since LAMMPS manages absolute state internally.
 
+### Additional Outputs
+
+| Port | Type | Description |
+|------|------|-------------|
+| `atom_types` | `overwrite[list]` | Per-atom type indices |
+| `volume` | `overwrite[float]` | Simulation box volume |
+| `pxx`, `pyy`, `pzz` | `overwrite[float]` | Stress tensor diagonals |
+| `box_dimensions` | `overwrite[list]` | Box lengths [Lx, Ly, Lz] |
+
 ## Demo
 
 ```bash
@@ -103,9 +145,10 @@ source .venv/bin/activate
 python demo/demo_report.py
 ```
 
-Generates `demo/report.html` with three simulation configurations:
-- **LJ Gas (NVE)**: Dilute gas demonstrating energy conservation
-- **LJ Liquid (NVT)**: Dense liquid equilibration with Nose-Hoover thermostat
-- **Crystal Melting (NVT)**: FCC lattice superheated above the melting point
+Generates `demo/report.html` with four canonical simulation configurations:
+- **Kob-Andersen Binary Glass** (864 atoms): 80:20 A:B LJ mixture quenched from T=2.0 to T=0.4 through the glass transition. Demonstrates multi-component systems and glassy dynamics.
+- **Uniaxial Tensile Deformation** (1728 atoms): FCC crystal stretched via `fix deform` at constant strain rate. Shows elastic response, yield, and fracture with a stress-strain curve.
+- **2D Hexatic Melting** (1250 atoms): 2D hexagonal lattice heated through the KTHNY melting transition. Demonstrates 2D physics with `dimension 2` and `enforce2d`.
+- **Isobaric Compression** (1372 atoms): NPT equation of state from dilute gas to dense liquid under progressive pressure ramp to P=25.
 
-Each section includes interactive 3D particle viewers (Three.js), Plotly thermodynamic charts, bigraph-viz architecture diagrams, and collapsible PBG document trees.
+Each section includes interactive 3D/2D particle viewers (Three.js with InstancedMesh), context-specific Plotly charts (stress-strain, quench curves, PV data), colored bigraph-viz architecture diagrams, and collapsible PBG document trees.

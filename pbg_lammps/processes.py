@@ -17,27 +17,27 @@ class LAMMPSProcess(Process):
     time interval, then returns updated thermodynamic quantities and
     particle positions as overwrites.
 
+    Two modes of setup:
+    1. **Config-based** (simple): Set individual parameters like density,
+       ensemble, temperature. The process auto-generates LAMMPS commands.
+    2. **Script-based** (advanced): Provide raw LAMMPS commands via
+       setup_commands. This enables multi-type systems, custom potentials,
+       fix deform, 2D simulations, etc.
+
     Config:
-        num_atoms_per_dim: Number of lattice repeats per dimension
-        density: Number density (for lattice command)
-        lattice_style: Lattice type ('sc', 'fcc', 'bcc')
-        temperature: Initial temperature for velocity creation
-        timestep: Integration timestep (LJ units)
-        pair_style: LAMMPS pair_style command string
-        pair_coeff: LAMMPS pair_coeff arguments
-        epsilon: LJ energy parameter
-        sigma: LJ length parameter
-        cutoff: Pair interaction cutoff
-        mass: Atom mass
-        ensemble: Integration ensemble ('nve', 'nvt', 'npt')
-        target_temp: Target temperature for NVT/NPT
-        tdamp: Thermostat damping parameter
-        target_press: Target pressure for NPT
-        pdamp: Barostat damping parameter
-        seed: Random seed for velocity initialization
+        setup_commands: Raw LAMMPS setup script (overrides auto-generation)
+        timestep: Integration timestep (used to convert interval to steps)
+        num_atoms_per_dim: Lattice repeats per dimension (auto mode)
+        density: Number density (auto mode)
+        lattice_style: Lattice type (auto mode)
+        temperature: Initial temperature (auto mode)
+        ensemble: Integration ensemble (auto mode)
+        ... (see config_schema for full list)
     """
 
     config_schema = {
+        # Advanced: raw LAMMPS script (overrides all auto-generation below)
+        'setup_commands': {'_type': 'string', '_default': ''},
         # System geometry
         'num_atoms_per_dim': {'_type': 'integer', '_default': 5},
         'density': {'_type': 'float', '_default': 0.6},
@@ -64,6 +64,7 @@ class LAMMPSProcess(Process):
         super().__init__(config=config, core=core)
         self._lmp = None
         self._first_run = True
+        self._dt = None
 
     def inputs(self):
         return {}
@@ -78,6 +79,12 @@ class LAMMPSProcess(Process):
             'num_atoms': 'overwrite[integer]',
             'positions': 'overwrite[list]',
             'velocities': 'overwrite[list]',
+            'atom_types': 'overwrite[list]',
+            'volume': 'overwrite[float]',
+            'pxx': 'overwrite[float]',
+            'pyy': 'overwrite[float]',
+            'pzz': 'overwrite[float]',
+            'box_dimensions': 'overwrite[list]',
         }
 
     def _build_simulation(self):
@@ -88,11 +95,13 @@ class LAMMPSProcess(Process):
         from lammps import lammps
 
         cfg = self.config
-        n = cfg['num_atoms_per_dim']
-
         self._lmp = lammps(cmdargs=['-nocite', '-log', 'none', '-screen', 'none'])
 
-        setup = f"""
+        if cfg['setup_commands']:
+            self._lmp.commands_string(cfg['setup_commands'])
+        else:
+            n = cfg['num_atoms_per_dim']
+            setup = f"""
 units lj
 atom_style atomic
 dimension 3
@@ -112,25 +121,27 @@ velocity all create {cfg['temperature']} {cfg['seed']} dist gaussian
 
 timestep {cfg['timestep']}
 """
-        self._lmp.commands_string(setup)
+            self._lmp.commands_string(setup)
 
-        # Set up ensemble
-        if cfg['ensemble'] == 'nve':
-            self._lmp.command('fix integ all nve')
-        elif cfg['ensemble'] == 'nvt':
-            self._lmp.command(
-                f"fix integ all nvt temp {cfg['target_temp']} "
-                f"{cfg['target_temp']} {cfg['tdamp']}")
-        elif cfg['ensemble'] == 'npt':
-            self._lmp.command(
-                f"fix integ all npt temp {cfg['target_temp']} "
-                f"{cfg['target_temp']} {cfg['tdamp']} "
-                f"iso {cfg['target_press']} {cfg['target_press']} "
-                f"{cfg['pdamp']}")
-        else:
-            raise ValueError(
-                f"Unknown ensemble: {cfg['ensemble']}. "
-                f"Use 'nve', 'nvt', or 'npt'.")
+            if cfg['ensemble'] == 'nve':
+                self._lmp.command('fix integ all nve')
+            elif cfg['ensemble'] == 'nvt':
+                self._lmp.command(
+                    f"fix integ all nvt temp {cfg['target_temp']} "
+                    f"{cfg['target_temp']} {cfg['tdamp']}")
+            elif cfg['ensemble'] == 'npt':
+                self._lmp.command(
+                    f"fix integ all npt temp {cfg['target_temp']} "
+                    f"{cfg['target_temp']} {cfg['tdamp']} "
+                    f"iso {cfg['target_press']} {cfg['target_press']} "
+                    f"{cfg['pdamp']}")
+            else:
+                raise ValueError(
+                    f"Unknown ensemble: {cfg['ensemble']}. "
+                    f"Use 'nve', 'nvt', or 'npt'.")
+
+        # Read actual timestep from LAMMPS
+        self._dt = self._lmp.extract_global("dt")
 
     def _read_state(self):
         """Read current thermodynamic state and positions from LAMMPS."""
@@ -140,6 +151,12 @@ timestep {cfg['timestep']}
 
         x = lmp.numpy.extract_atom('x')[:nlocal].copy()
         v = lmp.numpy.extract_atom('v')[:nlocal].copy()
+        types = lmp.numpy.extract_atom('type')[:nlocal].copy()
+
+        boxlo, boxhi, xy, yz, xz, periodicity, box_change = lmp.extract_box()
+        lx = boxhi[0] - boxlo[0]
+        ly = boxhi[1] - boxlo[1]
+        lz = boxhi[2] - boxlo[2]
 
         return {
             'temperature': float(lmp.get_thermo('temp')),
@@ -150,11 +167,16 @@ timestep {cfg['timestep']}
             'num_atoms': int(natoms),
             'positions': x.tolist(),
             'velocities': v.tolist(),
+            'atom_types': types.tolist(),
+            'volume': float(lmp.get_thermo('vol')),
+            'pxx': float(lmp.get_thermo('pxx')),
+            'pyy': float(lmp.get_thermo('pyy')),
+            'pzz': float(lmp.get_thermo('pzz')),
+            'box_dimensions': [lx, ly, lz],
         }
 
     def initial_state(self):
         self._build_simulation()
-        # Run 0 steps to initialize thermo
         self._lmp.command('run 0')
         self._first_run = False
         return self._read_state()
@@ -162,8 +184,7 @@ timestep {cfg['timestep']}
     def update(self, state, interval):
         self._build_simulation()
 
-        dt = self.config['timestep']
-        n_steps = max(1, int(round(interval / dt)))
+        n_steps = max(1, int(round(interval / self._dt)))
 
         if self._first_run:
             self._lmp.command(f'run {n_steps}')
