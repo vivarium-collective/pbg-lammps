@@ -146,9 +146,9 @@ python demo/demo_report.py
 ```
 
 Generates `demo/report.html` with four canonical simulation configurations:
-- **Kob-Andersen Binary Glass** (864 atoms): 80:20 A:B LJ mixture quenched from T=2.0 to T=0.4 through the glass transition. Demonstrates multi-component systems and glassy dynamics.
-- **Uniaxial Tensile Deformation** (1728 atoms): FCC crystal stretched via `fix deform` at constant strain rate. Shows elastic response, yield, and fracture with a stress-strain curve.
-- **2D Hexatic Melting** (1250 atoms): 2D hexagonal lattice heated through the KTHNY melting transition. Demonstrates 2D physics with `dimension 2` and `enforce2d`.
-- **Isobaric Compression** (1372 atoms): NPT equation of state from dilute gas to dense liquid under progressive pressure ramp to P=25.
+- **Spinodal Decomposition** (2048 atoms): 50:50 binary LJ mixture demixing below the critical solution temperature. Domain formation via the same mechanism as biomolecular condensates. Colored by species.
+- **Kremer-Grest Polymer Melt** (720 atoms): 36 chains of 20 beads with FENE bonds and WCA repulsion. The foundational coarse-grained polymer model, showing chain randomization from initial rod configurations.
+- **Liquid-Vapor Slab Interface** (2688 atoms): Dense LJ slab in vacuum at T=0.85. Shows stable two-phase coexistence, surface tension measurable from pressure tensor anisotropy (P_N vs P_T).
+- **Nanoparticle Sintering** (1042 atoms): Two spherical FCC clusters merging under surface energy minimization. Neck formation and coalescence relevant to powder metallurgy and nanoparticle synthesis.
 
-Each section includes interactive 3D/2D particle viewers (Three.js with InstancedMesh), context-specific Plotly charts (stress-strain, quench curves, PV data), colored bigraph-viz architecture diagrams, and collapsible PBG document trees.
+Each section includes interactive 3D particle viewers (Three.js with InstancedMesh), context-specific Plotly charts (demixing energy, pressure tensor, neck growth), colored bigraph-viz architecture diagrams, and collapsible PBG document trees.
