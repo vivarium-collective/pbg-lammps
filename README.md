@@ -2,6 +2,8 @@
 
 Process-bigraph wrapper for the [LAMMPS](https://www.lammps.org/) molecular dynamics simulator.
 
+**[View Interactive Demo Report](https://vivarium-collective.github.io/pbg-lammps/)** -- Lennard-Jones fluids, polymer chains, and thermal quench simulations with 3D viewers, Plotly charts, and bigraph architecture diagrams.
+
 Wraps LAMMPS as a time-driven `Process` using the bridge pattern, enabling LAMMPS simulations to participate in process-bigraph composite models. The wrapper manages a LAMMPS instance internally, translating between process-bigraph state ports and LAMMPS thermodynamic/atomic data.
 
 ## Installation
