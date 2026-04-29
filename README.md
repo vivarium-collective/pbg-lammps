@@ -20,6 +20,13 @@ uv pip install "lammps[mpi]"
 
 ## Quick Start
 
+`LAMMPSProcess` is configured with a standard LAMMPS input script — the same
+format LAMMPS itself reads (see [LAMMPS Commands](https://docs.lammps.org/Commands_input.html)).
+You can either point it at a `.in` file on disk or pass the script inline.
+Any `run` / `rerun` commands in the script are stripped at load time — the
+process-bigraph orchestrator drives integration based on the requested
+`interval`.
+
 ```python
 from process_bigraph import Composite, allocate_core, gather_emitter_results
 from process_bigraph.emitter import RAMEmitter
@@ -29,13 +36,31 @@ core = allocate_core()
 core.register_link('LAMMPSProcess', LAMMPSProcess)
 core.register_link('ram-emitter', RAMEmitter)
 
-# Create a Lennard-Jones liquid simulation
+# Option A: load from a .in file on disk
 doc = make_lammps_document(
-    num_atoms_per_dim=5,
-    density=0.85,
-    lattice_style='fcc',
-    ensemble='nvt',
-    target_temp=1.0,
+    input_file='path/to/simulation.in',
+    interval=1.0,
+)
+
+# Option B: pass the script inline
+doc = make_lammps_document(
+    input_script="""
+units lj
+atom_style atomic
+dimension 3
+boundary p p p
+lattice fcc 0.85
+region box block 0 5 0 5 0 5
+create_box 1 box
+create_atoms 1 box
+mass 1 1.0
+pair_style lj/cut 2.5
+pair_coeff 1 1 1.0 1.0
+pair_modify shift yes
+velocity all create 1.0 87287 dist gaussian
+timestep 0.005
+fix integ all nvt temp 1.0 1.0 0.5
+""",
     interval=1.0,
 )
 
@@ -71,63 +96,50 @@ for entry in results[('emitter',)]:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `num_atoms_per_dim` | int | 5 | Lattice repeats per dimension |
-| `density` | float | 0.6 | Number density |
-| `lattice_style` | string | "sc" | Lattice type (sc, fcc, bcc) |
-| `temperature` | float | 1.0 | Initial temperature |
-| `timestep` | float | 0.005 | Integration timestep |
-| `pair_style` | string | "lj/cut" | LAMMPS pair style |
-| `epsilon` | float | 1.0 | LJ energy parameter |
-| `sigma` | float | 1.0 | LJ length parameter |
-| `cutoff` | float | 2.5 | Pair cutoff distance |
-| `mass` | float | 1.0 | Atom mass |
-| `ensemble` | string | "nve" | Ensemble (nve, nvt, npt) |
-| `target_temp` | float | 1.0 | Thermostat target T |
-| `tdamp` | float | 0.5 | Thermostat damping |
-| `target_press` | float | 0.0 | Barostat target P |
-| `pdamp` | float | 5.0 | Barostat damping |
-| `seed` | int | 87287 | RNG seed |
-| `setup_commands` | string | "" | Raw LAMMPS script (overrides auto-generation) |
+| `input_file` | string | "" | Path to a LAMMPS `.in` input file |
+| `input_script` | string | "" | Inline LAMMPS script (alternative to `input_file`) |
+| `working_directory` | string | "" | Directory for resolving relative paths in commands like `read_data` (defaults to the directory of `input_file`) |
 
-### Advanced: Custom LAMMPS Scripts
+Exactly one of `input_file` or `input_script` must be provided.
 
-For complex setups (multi-type systems, custom potentials, fix deform, 2D), pass raw LAMMPS commands via `setup_commands`:
+### LAMMPS Input File Format
 
-```python
-doc = make_lammps_document(
-    setup_commands="""
-units lj
-atom_style atomic
-dimension 3
-boundary p p p
-lattice fcc 1.2
-region box block 0 6 0 6 0 6
-create_box 2 box
-create_atoms 1 box
-mass 1 1.0
-mass 2 1.0
-set type 1 type/fraction 2 0.2 12345
-pair_style lj/cut 2.5
-pair_coeff 1 1 1.0 1.0 2.5
-pair_coeff 1 2 1.5 0.8 2.0
-pair_coeff 2 2 0.5 0.88 2.2
-pair_modify shift yes
-velocity all create 2.0 87287 dist gaussian
-timestep 0.005
-fix integ all nvt temp 2.0 0.4 1.0
-""",
-    timestep=0.005,
-    interval=1.0,
-)
+The wrapper accepts any standard LAMMPS input file. For example, the
+following script (saved as `lj_nvt.in` and loaded via `input_file=`) sets
+up a Lennard-Jones liquid in NVT:
+
+```text
+units           lj
+atom_style      atomic
+dimension       3
+boundary        p p p
+
+lattice         fcc 0.85
+region          box block 0 5 0 5 0 5
+create_box      1 box
+create_atoms    1 box
+mass            1 1.0
+
+pair_style      lj/cut 2.5
+pair_coeff      1 1 1.0 1.0
+pair_modify     shift yes
+
+velocity        all create 1.0 87287 dist gaussian
+timestep        0.005
+fix             integ all nvt temp 1.0 1.0 0.5
 ```
+
+Multi-type systems, custom potentials, FENE bonds, 2D simulations,
+`read_data`-based setups, etc. are all supported — anything LAMMPS itself
+accepts. Just leave out the `run` command (or include it; it will be
+filtered out automatically).
 
 ## Architecture
 
-The wrapper uses the **bridge pattern**: a single `LAMMPSProcess` owns a LAMMPS instance that is lazily initialized on the first `update()` call. Each update cycle follows Push-Run-Read:
+The wrapper uses the **bridge pattern**: a single `LAMMPSProcess` owns a LAMMPS instance that is lazily initialized on the first `update()` call. On the first call, the input script is loaded with `commands_string()` (with `run` / `rerun` lines filtered out so the orchestrator drives integration). Each subsequent update cycle follows Run-Read:
 
-1. **Push**: (future) inject external state into LAMMPS via `scatter_atoms()`
-2. **Run**: advance LAMMPS by `interval / timestep` steps
-3. **Read**: extract thermodynamic quantities via `get_thermo()` and atomic data via `numpy.extract_atom()`
+1. **Run**: advance LAMMPS by `interval / timestep` steps
+2. **Read**: extract thermodynamic quantities via `get_thermo()` and atomic data via `numpy.extract_atom()`
 
 All outputs use `overwrite` types since LAMMPS manages absolute state internally.
 

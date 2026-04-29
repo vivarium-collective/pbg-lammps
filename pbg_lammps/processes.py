@@ -1,63 +1,37 @@
 """LAMMPS Process wrapper for process-bigraph.
 
-Wraps the LAMMPS molecular dynamics simulator as a time-driven Process
-using the bridge pattern. The internal LAMMPS instance is lazily
-initialized on the first update() call.
+Wraps the LAMMPS molecular dynamics simulator as a time-driven Process.
+The process accepts a standard LAMMPS input script (either a path to a
+.in file or an inline string), executes the setup, and then advances
+the integrator on each update(). Any `run` / `rerun` commands present
+in the script are filtered out — the process-bigraph orchestrator
+drives integration via update(interval=...).
 """
 
-import numpy as np
+import os
 from process_bigraph import Process
 
 
 class LAMMPSProcess(Process):
     """Bridge Process wrapping the LAMMPS molecular dynamics engine.
 
-    Simulates atomic/molecular systems using classical force fields.
-    On each update(), advances the LAMMPS integrator by the requested
-    time interval, then returns updated thermodynamic quantities and
-    particle positions as overwrites.
-
-    Two modes of setup:
-    1. **Config-based** (simple): Set individual parameters like density,
-       ensemble, temperature. The process auto-generates LAMMPS commands.
-    2. **Script-based** (advanced): Provide raw LAMMPS commands via
-       setup_commands. This enables multi-type systems, custom potentials,
-       fix deform, 2D simulations, etc.
+    Configure with a standard LAMMPS input script (the same format
+    LAMMPS itself reads, e.g. https://docs.lammps.org/Commands_input.html).
+    `run` and `rerun` commands are stripped out at load time — the
+    bridge issues `run N` calls itself based on the requested interval.
 
     Config:
-        setup_commands: Raw LAMMPS setup script (overrides auto-generation)
-        timestep: Integration timestep (used to convert interval to steps)
-        num_atoms_per_dim: Lattice repeats per dimension (auto mode)
-        density: Number density (auto mode)
-        lattice_style: Lattice type (auto mode)
-        temperature: Initial temperature (auto mode)
-        ensemble: Integration ensemble (auto mode)
-        ... (see config_schema for full list)
+        input_file: path to a LAMMPS .in input file
+        input_script: inline LAMMPS script content (alternative to input_file)
+        working_directory: directory used for resolving relative paths
+            in commands like `read_data` (defaults to the directory
+            containing input_file, or CWD for input_script)
     """
 
     config_schema = {
-        # Advanced: raw LAMMPS script (overrides all auto-generation below)
-        'setup_commands': {'_type': 'string', '_default': ''},
-        # System geometry
-        'num_atoms_per_dim': {'_type': 'integer', '_default': 5},
-        'density': {'_type': 'float', '_default': 0.6},
-        'lattice_style': {'_type': 'string', '_default': 'sc'},
-        # Interaction potential
-        'pair_style': {'_type': 'string', '_default': 'lj/cut'},
-        'epsilon': {'_type': 'float', '_default': 1.0},
-        'sigma': {'_type': 'float', '_default': 1.0},
-        'cutoff': {'_type': 'float', '_default': 2.5},
-        'mass': {'_type': 'float', '_default': 1.0},
-        # Temperature / velocities
-        'temperature': {'_type': 'float', '_default': 1.0},
-        'seed': {'_type': 'integer', '_default': 87287},
-        # Integration
-        'timestep': {'_type': 'float', '_default': 0.005},
-        'ensemble': {'_type': 'string', '_default': 'nve'},
-        'target_temp': {'_type': 'float', '_default': 1.0},
-        'tdamp': {'_type': 'float', '_default': 0.5},
-        'target_press': {'_type': 'float', '_default': 0.0},
-        'pdamp': {'_type': 'float', '_default': 5.0},
+        'input_file': {'_type': 'string', '_default': ''},
+        'input_script': {'_type': 'string', '_default': ''},
+        'working_directory': {'_type': 'string', '_default': ''},
     }
 
     def __init__(self, config=None, core=None):
@@ -87,60 +61,50 @@ class LAMMPSProcess(Process):
             'box_dimensions': 'overwrite[list]',
         }
 
+    @staticmethod
+    def _filter_run_commands(script):
+        """Strip `run` / `rerun` commands so the bridge can drive integration."""
+        out = []
+        for line in script.split('\n'):
+            stripped = line.split('#', 1)[0].strip()
+            tokens = stripped.split()
+            if tokens and tokens[0] in ('run', 'rerun'):
+                continue
+            out.append(line)
+        return '\n'.join(out)
+
+    def _resolve_script(self):
+        cfg = self.config
+        if cfg['input_file']:
+            path = cfg['input_file']
+            with open(path) as f:
+                script = f.read()
+            wd = cfg['working_directory'] or os.path.dirname(os.path.abspath(path))
+            return script, wd
+        if cfg['input_script']:
+            return cfg['input_script'], cfg['working_directory']
+        raise ValueError(
+            'LAMMPSProcess requires either input_file or input_script')
+
     def _build_simulation(self):
-        """Lazily initialize the LAMMPS instance."""
         if self._lmp is not None:
             return
 
         from lammps import lammps
 
-        cfg = self.config
-        self._lmp = lammps(cmdargs=['-nocite', '-log', 'none', '-screen', 'none'])
+        script, wd = self._resolve_script()
+        script = self._filter_run_commands(script)
 
-        if cfg['setup_commands']:
-            self._lmp.commands_string(cfg['setup_commands'])
-        else:
-            n = cfg['num_atoms_per_dim']
-            setup = f"""
-units lj
-atom_style atomic
-dimension 3
-boundary p p p
+        original_cwd = os.getcwd()
+        if wd:
+            os.chdir(wd)
+        try:
+            self._lmp = lammps(cmdargs=['-nocite', '-log', 'none', '-screen', 'none'])
+            self._lmp.commands_string(script)
+        finally:
+            if wd:
+                os.chdir(original_cwd)
 
-lattice {cfg['lattice_style']} {cfg['density']}
-region box block 0 {n} 0 {n} 0 {n}
-create_box 1 box
-create_atoms 1 box
-mass 1 {cfg['mass']}
-
-pair_style {cfg['pair_style']} {cfg['cutoff']}
-pair_coeff 1 1 {cfg['epsilon']} {cfg['sigma']}
-pair_modify shift yes
-
-velocity all create {cfg['temperature']} {cfg['seed']} dist gaussian
-
-timestep {cfg['timestep']}
-"""
-            self._lmp.commands_string(setup)
-
-            if cfg['ensemble'] == 'nve':
-                self._lmp.command('fix integ all nve')
-            elif cfg['ensemble'] == 'nvt':
-                self._lmp.command(
-                    f"fix integ all nvt temp {cfg['target_temp']} "
-                    f"{cfg['target_temp']} {cfg['tdamp']}")
-            elif cfg['ensemble'] == 'npt':
-                self._lmp.command(
-                    f"fix integ all npt temp {cfg['target_temp']} "
-                    f"{cfg['target_temp']} {cfg['tdamp']} "
-                    f"iso {cfg['target_press']} {cfg['target_press']} "
-                    f"{cfg['pdamp']}")
-            else:
-                raise ValueError(
-                    f"Unknown ensemble: {cfg['ensemble']}. "
-                    f"Use 'nve', 'nvt', or 'npt'.")
-
-        # Read actual timestep from LAMMPS
         self._dt = self._lmp.extract_global("dt")
 
     def _read_state(self):

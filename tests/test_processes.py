@@ -1,9 +1,14 @@
 """Unit tests for LAMMPSProcess."""
 
+import os
+import tempfile
+
 import pytest
 from process_bigraph import allocate_core
 from pbg_lammps.processes import LAMMPSProcess
 
+
+# ── Fixtures ────────────────────────────────────────────────────────
 
 @pytest.fixture
 def core():
@@ -12,17 +17,45 @@ def core():
     return c
 
 
+def _basic_lj_script(n=3, density=0.5, ensemble='nve', target_temp=1.0,
+                     temperature=1.0, tdamp=0.5):
+    """Minimal single-type LJ input script for tests."""
+    lines = [
+        "units lj",
+        "atom_style atomic",
+        "dimension 3",
+        "boundary p p p",
+        f"lattice sc {density}",
+        f"region box block 0 {n} 0 {n} 0 {n}",
+        "create_box 1 box",
+        "create_atoms 1 box",
+        "mass 1 1.0",
+        "pair_style lj/cut 2.5",
+        "pair_coeff 1 1 1.0 1.0",
+        "pair_modify shift yes",
+        f"velocity all create {temperature} 87287 dist gaussian",
+        "timestep 0.005",
+    ]
+    if ensemble == 'nve':
+        lines.append("fix integ all nve")
+    elif ensemble == 'nvt':
+        lines.append(
+            f"fix integ all nvt temp {target_temp} {target_temp} {tdamp}")
+    return "\n".join(lines) + "\n"
+
+
+# ── Tests ───────────────────────────────────────────────────────────
+
 def test_instantiation(core):
     proc = LAMMPSProcess(
-        config={'num_atoms_per_dim': 3, 'temperature': 1.0},
+        config={'input_script': _basic_lj_script(n=3)},
         core=core)
-    assert proc.config['num_atoms_per_dim'] == 3
-    assert proc.config['ensemble'] == 'nve'
+    assert 'fix integ all nve' in proc.config['input_script']
 
 
 def test_initial_state(core):
     proc = LAMMPSProcess(
-        config={'num_atoms_per_dim': 3, 'density': 0.5},
+        config={'input_script': _basic_lj_script(n=3, density=0.5)},
         core=core)
     state = proc.initial_state()
     assert 'temperature' in state
@@ -45,7 +78,7 @@ def test_initial_state(core):
 
 def test_single_update(core):
     proc = LAMMPSProcess(
-        config={'num_atoms_per_dim': 3, 'density': 0.5},
+        config={'input_script': _basic_lj_script(n=3, density=0.5)},
         core=core)
     proc.initial_state()
     result = proc.update({}, interval=0.5)
@@ -61,12 +94,8 @@ def test_single_update(core):
 
 def test_nve_energy_conservation(core):
     proc = LAMMPSProcess(
-        config={
-            'num_atoms_per_dim': 4,
-            'density': 0.6,
-            'temperature': 1.0,
-            'ensemble': 'nve',
-        },
+        config={'input_script': _basic_lj_script(
+            n=4, density=0.6, ensemble='nve', temperature=1.0)},
         core=core)
     state0 = proc.initial_state()
     e0 = state0['total_energy']
@@ -79,14 +108,9 @@ def test_nve_energy_conservation(core):
 
 def test_nvt_temperature(core):
     proc = LAMMPSProcess(
-        config={
-            'num_atoms_per_dim': 4,
-            'density': 0.6,
-            'temperature': 2.0,
-            'ensemble': 'nvt',
-            'target_temp': 1.5,
-            'tdamp': 0.5,
-        },
+        config={'input_script': _basic_lj_script(
+            n=4, density=0.6, ensemble='nvt',
+            target_temp=1.5, temperature=2.0, tdamp=0.5)},
         core=core)
     proc.initial_state()
     result = proc.update({}, interval=5.0)
@@ -96,7 +120,8 @@ def test_nvt_temperature(core):
 
 
 def test_outputs_schema(core):
-    proc = LAMMPSProcess(config={'num_atoms_per_dim': 3}, core=core)
+    proc = LAMMPSProcess(
+        config={'input_script': _basic_lj_script(n=3)}, core=core)
     outputs = proc.outputs()
     expected_ports = [
         'temperature', 'potential_energy', 'kinetic_energy',
@@ -110,19 +135,18 @@ def test_outputs_schema(core):
 
 
 def test_config_defaults(core):
+    """Empty config should fail — input_file or input_script is required."""
     proc = LAMMPSProcess(config={}, core=core)
-    assert proc.config['num_atoms_per_dim'] == 5
-    assert proc.config['density'] == 0.6
-    assert proc.config['lattice_style'] == 'sc'
-    assert proc.config['ensemble'] == 'nve'
-    assert proc.config['setup_commands'] == ''
-    proc.close()
+    assert proc.config['input_file'] == ''
+    assert proc.config['input_script'] == ''
+    assert proc.config['working_directory'] == ''
+    with pytest.raises(ValueError):
+        proc.initial_state()
 
 
 def test_positions_are_3d(core):
     proc = LAMMPSProcess(
-        config={'num_atoms_per_dim': 3},
-        core=core)
+        config={'input_script': _basic_lj_script(n=3)}, core=core)
     state = proc.initial_state()
     for pos in state['positions']:
         assert len(pos) == 3
@@ -133,7 +157,7 @@ def test_positions_are_3d(core):
 
 def test_multiple_updates(core):
     proc = LAMMPSProcess(
-        config={'num_atoms_per_dim': 3, 'density': 0.5},
+        config={'input_script': _basic_lj_script(n=3, density=0.5)},
         core=core)
     proc.initial_state()
     results = []
@@ -144,11 +168,9 @@ def test_multiple_updates(core):
     proc.close()
 
 
-def test_setup_commands_binary_system(core):
-    """Test that setup_commands enables multi-type systems."""
-    proc = LAMMPSProcess(
-        config={
-            'setup_commands': """
+def test_input_script_binary_system(core):
+    """Multi-type setups via input_script."""
+    script = """
 units lj
 atom_style atomic
 dimension 3
@@ -168,10 +190,8 @@ pair_modify shift yes
 velocity all create 1.0 87287 dist gaussian
 timestep 0.005
 fix integ all nvt temp 1.0 1.0 0.5
-""",
-            'timestep': 0.005,
-        },
-        core=core)
+"""
+    proc = LAMMPSProcess(config={'input_script': script}, core=core)
     state = proc.initial_state()
     types = state['atom_types']
     assert 1 in types
@@ -180,11 +200,9 @@ fix integ all nvt temp 1.0 1.0 0.5
     proc.close()
 
 
-def test_setup_commands_2d(core):
-    """Test that setup_commands enables 2D simulations."""
-    proc = LAMMPSProcess(
-        config={
-            'setup_commands': """
+def test_input_script_2d(core):
+    """2D simulations via input_script."""
+    script = """
 units lj
 atom_style atomic
 dimension 2
@@ -201,13 +219,55 @@ velocity all create 0.5 87287 dist gaussian
 timestep 0.005
 fix integ all nvt temp 0.5 0.5 0.5
 fix enforce all enforce2d
-""",
-            'timestep': 0.005,
-        },
-        core=core)
+"""
+    proc = LAMMPSProcess(config={'input_script': script}, core=core)
     state = proc.initial_state()
     assert state['num_atoms'] > 0
-    # All z-positions should be 0 in 2D
     for pos in state['positions']:
         assert abs(pos[2]) < 1e-10
     proc.close()
+
+
+def test_run_commands_are_filtered(core):
+    """User-written `run` commands must be stripped — the bridge controls timestepping."""
+    script = _basic_lj_script(n=3) + "run 100000\nrun 50000\n"
+    proc = LAMMPSProcess(config={'input_script': script}, core=core)
+    state = proc.initial_state()  # would take a long time if run weren't filtered
+    assert state['num_atoms'] == 27
+    proc.close()
+
+
+def test_filter_run_commands_static():
+    script = (
+        "fix integ all nve\n"
+        "run 1000\n"
+        "  run 500 # with leading whitespace\n"
+        "rerun foo\n"
+        "# run 200 (comment, keep)\n"
+        "variable run_count equal 5\n"  # 'run_count' not 'run'
+    )
+    out = LAMMPSProcess._filter_run_commands(script)
+    assert 'run 1000' not in out
+    assert 'run 500' not in out
+    assert 'rerun foo' not in out
+    assert '# run 200' in out
+    assert 'variable run_count equal 5' in out
+
+
+def test_input_file_path(core, tmp_path):
+    """Loading from an actual .in file on disk."""
+    script = _basic_lj_script(n=3, density=0.5)
+    in_path = tmp_path / 'test.in'
+    in_path.write_text(script)
+    proc = LAMMPSProcess(
+        config={'input_file': str(in_path)}, core=core)
+    state = proc.initial_state()
+    assert state['num_atoms'] == 27
+    proc.close()
+
+
+def test_missing_input_raises(core):
+    """No input_file and no input_script should raise on build."""
+    proc = LAMMPSProcess(config={}, core=core)
+    with pytest.raises(ValueError, match='input_file or input_script'):
+        proc.initial_state()

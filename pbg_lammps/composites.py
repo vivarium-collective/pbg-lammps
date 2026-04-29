@@ -2,51 +2,28 @@
 
 
 def make_lammps_document(
-    num_atoms_per_dim=5,
-    density=0.6,
-    lattice_style='sc',
-    temperature=1.0,
-    timestep=0.005,
-    pair_style='lj/cut',
-    epsilon=1.0,
-    sigma=1.0,
-    cutoff=2.5,
-    mass=1.0,
-    ensemble='nve',
-    target_temp=1.0,
-    tdamp=0.5,
-    target_press=0.0,
-    pdamp=5.0,
-    seed=87287,
-    setup_commands='',
+    input_file='',
+    input_script='',
+    working_directory='',
     interval=1.0,
 ):
     """Create a composite document for a LAMMPS molecular dynamics simulation.
 
-    Returns a document dict ready for use with Composite().
+    Provide either a path to a LAMMPS .in file (`input_file`) or an
+    inline script (`input_script`). `run` / `rerun` commands in the
+    script are stripped — the orchestrator drives integration based
+    on `interval`.
 
-    For simple single-type LJ simulations, use the individual parameters.
-    For complex setups (multi-type, custom potentials, fix deform, 2D),
-    pass a raw LAMMPS script via setup_commands.
+    Returns a document dict ready for use with Composite().
     """
+    if not input_file and not input_script:
+        raise ValueError(
+            'make_lammps_document requires input_file or input_script')
+
     config = {
-        'num_atoms_per_dim': num_atoms_per_dim,
-        'density': density,
-        'lattice_style': lattice_style,
-        'temperature': temperature,
-        'timestep': timestep,
-        'pair_style': pair_style,
-        'epsilon': epsilon,
-        'sigma': sigma,
-        'cutoff': cutoff,
-        'mass': mass,
-        'ensemble': ensemble,
-        'target_temp': target_temp,
-        'tdamp': tdamp,
-        'target_press': target_press,
-        'pdamp': pdamp,
-        'seed': seed,
-        'setup_commands': setup_commands,
+        'input_file': input_file,
+        'input_script': input_script,
+        'working_directory': working_directory,
     }
 
     return {

@@ -6,9 +6,9 @@ Runs four canonical MD simulations demonstrating LAMMPS's range:
   3. Liquid-vapor slab interface — two-phase coexistence
   4. Nanoparticle sintering — two clusters merging under surface tension
 
-Generates interactive 3D particle viewers with Three.js, Plotly charts,
-bigraph-viz architecture diagrams, and navigatable PBG document trees —
-all in a single self-contained HTML.
+Each simulation is driven by a standard LAMMPS input (.in) file. The
+input file is displayed in the report alongside the 3D viewer, charts,
+bigraph diagram, and PBG composite document tree.
 """
 
 import json
@@ -24,7 +24,7 @@ from pbg_lammps.composites import make_lammps_document
 
 # ── Helper: polymer data file generation ──────────────────────────
 
-def _write_polymer_data(n_chains, chain_len, box_size, bond_len=0.97):
+def _polymer_data_text(n_chains, chain_len, box_size, bond_len=0.97):
     """Generate a LAMMPS data file with straight-rod polymer chains on a grid."""
     rng = np.random.RandomState(42)
     atoms = []
@@ -64,20 +64,164 @@ def _write_polymer_data(n_chains, chain_len, box_size, bond_len=0.97):
     for b in bonds:
         lines.append(f'{b[0]} {b[1]} {b[2]} {b[3]}\n')
 
-    tmpf = tempfile.NamedTemporaryFile(mode='w', suffix='.data', delete=False)
-    tmpf.write(''.join(lines))
-    tmpf.close()
-    return tmpf.name, len(atoms)
+    return ''.join(lines), len(atoms)
+
+
+# ── LAMMPS Input Files ─────────────────────────────────────────────
+
+SPINODAL_IN = """\
+# Spinodal decomposition: 50:50 binary LJ mixture quenched below T_c
+# Same-species attractions are stronger than cross-species, driving
+# spontaneous phase separation.
+
+units           lj
+atom_style      atomic
+dimension       3
+boundary        p p p
+
+lattice         fcc 0.85
+region          box block 0 8 0 8 0 8
+create_box      2 box
+create_atoms    1 box
+mass            1 1.0
+mass            2 1.0
+
+# Randomly relabel half the atoms as type 2 (50:50 mixture)
+set             type 1 type/fraction 2 0.5 48392
+
+pair_style      lj/cut 2.5
+pair_coeff      1 1 1.0 1.0 2.5     # A-A attraction
+pair_coeff      2 2 1.0 1.0 2.5     # B-B attraction
+pair_coeff      1 2 0.5 1.0 2.5     # A-B weaker -> demixing
+pair_modify     shift yes
+
+velocity        all create 2.0 87287 dist gaussian
+timestep        0.005
+
+# NVT well below the consolute temperature
+fix             integ all nvt temp 0.7 0.7 0.5
+"""
+
+POLYMER_IN_TEMPLATE = """\
+# Kremer-Grest polymer melt: bead-spring chains with FENE bonds.
+# 36 chains of 20 beads each; WCA repulsion + FENE bonds.
+
+units           lj
+atom_style      bond
+dimension       3
+boundary        p p p
+
+read_data       {data_file}
+
+# Purely repulsive Weeks-Chandler-Andersen potential
+pair_style      lj/cut 1.122462
+pair_coeff      1 1 1.0 1.0 1.122462
+pair_modify     shift yes
+
+# Finitely extensible nonlinear elastic bonds
+bond_style      fene
+bond_coeff      1 30.0 1.5 1.0 1.0
+special_bonds   fene
+
+velocity        all create 1.0 87287 dist gaussian
+timestep        0.005
+
+fix             integ all nvt temp 1.0 1.0 0.5
+"""
+
+SLAB_IN = """\
+# Liquid-vapor slab: dense LJ liquid sandwiched between vacuum.
+# Long cutoff captures surface tension via pressure tensor anisotropy.
+
+units           lj
+atom_style      atomic
+dimension       3
+boundary        p p p
+
+lattice         fcc 0.84
+region          box block 0 8 0 8 0 30
+region          slab block 0 8 0 8 10 20
+create_box      1 box
+create_atoms    1 region slab
+mass            1 1.0
+
+pair_style      lj/cut 3.5
+pair_coeff      1 1 1.0 1.0
+
+velocity        all create 0.85 87287 dist gaussian
+timestep        0.005
+
+# Stable liquid-vapor coexistence at T=0.85 (well below T_c ~ 1.3)
+fix             integ all nvt temp 0.85 0.85 0.5
+"""
+
+SINTER_IN = """\
+# Nanoparticle sintering: two crystalline LJ clusters merging.
+# Shrink-wrapped boundary; surface diffusion forms a neck over time.
+
+units           lj
+atom_style      atomic
+dimension       3
+boundary        s s s
+
+lattice         fcc 1.0
+region          box block -2 24 -2 24 -2 24
+create_box      1 box
+
+# Two spherical clusters separated by a small gap
+region          sphere1 sphere 7 11 11 5 units box
+region          sphere2 sphere 17 11 11 5 units box
+create_atoms    1 region sphere1
+create_atoms    1 region sphere2
+mass            1 1.0
+
+pair_style      lj/cut 2.5
+pair_coeff      1 1 1.0 1.0
+pair_modify     shift yes
+
+velocity        all create 0.4 87287 dist gaussian
+timestep        0.005
+
+fix             integ all nvt temp 0.4 0.4 0.5
+"""
 
 
 # ── Simulation Configs ──────────────────────────────────────────────
 
-def _get_configs():
-    """Build config list (polymer needs a temp file path)."""
+def _materialize_inputs(workdir):
+    """Write all .in (and companion .data) files into workdir.
 
-    poly_data_path, poly_n_atoms = _write_polymer_data(
+    Returns a list of config dicts with input file paths and the inline
+    .in content for display in the report.
+    """
+    # Polymer needs a generated .data file alongside the .in
+    poly_data_text, _ = _polymer_data_text(
         n_chains=36, chain_len=20, box_size=20.0)
+    poly_data_path = os.path.join(workdir, 'polymer_melt.data')
+    with open(poly_data_path, 'w') as f:
+        f.write(poly_data_text)
 
+    polymer_in = POLYMER_IN_TEMPLATE.format(data_file='polymer_melt.data')
+
+    inputs = [
+        ('spinodal', 'spinodal.in', SPINODAL_IN),
+        ('polymer', 'polymer.in', polymer_in),
+        ('slab', 'slab.in', SLAB_IN),
+        ('sinter', 'sinter.in', SINTER_IN),
+    ]
+    paths = {}
+    contents = {}
+    for sid, fname, text in inputs:
+        path = os.path.join(workdir, fname)
+        with open(path, 'w') as f:
+            f.write(text)
+        paths[sid] = path
+        contents[sid] = text
+    return paths, contents
+
+
+def _get_configs(input_paths, input_contents):
+    """Build config list referencing on-disk .in files."""
     return [
         {
             'id': 'spinodal',
@@ -92,30 +236,9 @@ def _get_configs():
                 'mechanism underlying biomolecular condensate formation in cells. '
                 'The domain growth follows the Lifshitz-Slyozov t^(1/3) scaling law.'
             ),
-            'config': {
-                'setup_commands': (
-                    "units lj\n"
-                    "atom_style atomic\n"
-                    "dimension 3\n"
-                    "boundary p p p\n"
-                    "lattice fcc 0.85\n"
-                    "region box block 0 8 0 8 0 8\n"
-                    "create_box 2 box\n"
-                    "create_atoms 1 box\n"
-                    "mass 1 1.0\n"
-                    "mass 2 1.0\n"
-                    "set type 1 type/fraction 2 0.5 48392\n"
-                    "pair_style lj/cut 2.5\n"
-                    "pair_coeff 1 1 1.0 1.0 2.5\n"
-                    "pair_coeff 2 2 1.0 1.0 2.5\n"
-                    "pair_coeff 1 2 0.5 1.0 2.5\n"
-                    "pair_modify shift yes\n"
-                    "velocity all create 2.0 87287 dist gaussian\n"
-                    "timestep 0.005\n"
-                    "fix integ all nvt temp 0.7 0.7 0.5\n"
-                ),
-                'timestep': 0.005,
-            },
+            'input_file': input_paths['spinodal'],
+            'input_filename': 'spinodal.in',
+            'input_content': input_contents['spinodal'],
             'n_snapshots': 40,
             'total_time': 80.0,
             'camera': [22, 16, 22],
@@ -137,26 +260,9 @@ def _get_configs():
                 'reptation, and entanglement — and is widely used to study polymer '
                 'blends, gels, and biomolecular assemblies.'
             ),
-            'config': {
-                'setup_commands': (
-                    "units lj\n"
-                    "atom_style bond\n"
-                    "dimension 3\n"
-                    "boundary p p p\n"
-                    f"read_data {poly_data_path}\n"
-                    "pair_style lj/cut 1.122462\n"
-                    "pair_coeff 1 1 1.0 1.0 1.122462\n"
-                    "pair_modify shift yes\n"
-                    "bond_style fene\n"
-                    "bond_coeff 1 30.0 1.5 1.0 1.0\n"
-                    "special_bonds fene\n"
-                    "velocity all create 1.0 87287 dist gaussian\n"
-                    "timestep 0.005\n"
-                    "fix integ all nvt temp 1.0 1.0 0.5\n"
-                ),
-                'timestep': 0.005,
-            },
-            'poly_data_path': poly_data_path,
+            'input_file': input_paths['polymer'],
+            'input_filename': 'polymer.in',
+            'input_content': input_contents['polymer'],
             'n_snapshots': 40,
             'total_time': 100.0,
             'camera': [30, 22, 30],
@@ -179,26 +285,9 @@ def _get_configs():
                 'method for computing surface tension via the pressure tensor anisotropy: '
                 'gamma = L_z/2 * (P_N - P_T).'
             ),
-            'config': {
-                'setup_commands': (
-                    "units lj\n"
-                    "atom_style atomic\n"
-                    "dimension 3\n"
-                    "boundary p p p\n"
-                    "lattice fcc 0.84\n"
-                    "region box block 0 8 0 8 0 30\n"
-                    "region slab block 0 8 0 8 10 20\n"
-                    "create_box 1 box\n"
-                    "create_atoms 1 region slab\n"
-                    "mass 1 1.0\n"
-                    "pair_style lj/cut 3.5\n"
-                    "pair_coeff 1 1 1.0 1.0\n"
-                    "velocity all create 0.85 87287 dist gaussian\n"
-                    "timestep 0.005\n"
-                    "fix integ all nvt temp 0.85 0.85 0.5\n"
-                ),
-                'timestep': 0.005,
-            },
+            'input_file': input_paths['slab'],
+            'input_filename': 'slab.in',
+            'input_content': input_contents['slab'],
             'n_snapshots': 35,
             'total_time': 60.0,
             'camera': [22, 15, 50],
@@ -219,29 +308,9 @@ def _get_configs():
                 'additive manufacturing. The shrinking boundary box visible in the viewer '
                 'is an artifact of the non-periodic boundaries (shrink-wrapped).'
             ),
-            'config': {
-                'setup_commands': (
-                    "units lj\n"
-                    "atom_style atomic\n"
-                    "dimension 3\n"
-                    "boundary s s s\n"
-                    "lattice fcc 1.0\n"
-                    "region box block -2 24 -2 24 -2 24\n"
-                    "create_box 1 box\n"
-                    "region sphere1 sphere 7 11 11 5 units box\n"
-                    "region sphere2 sphere 17 11 11 5 units box\n"
-                    "create_atoms 1 region sphere1\n"
-                    "create_atoms 1 region sphere2\n"
-                    "mass 1 1.0\n"
-                    "pair_style lj/cut 2.5\n"
-                    "pair_coeff 1 1 1.0 1.0\n"
-                    "pair_modify shift yes\n"
-                    "velocity all create 0.4 87287 dist gaussian\n"
-                    "timestep 0.005\n"
-                    "fix integ all nvt temp 0.4 0.4 0.5\n"
-                ),
-                'timestep': 0.005,
-            },
+            'input_file': input_paths['sinter'],
+            'input_filename': 'sinter.in',
+            'input_content': input_contents['sinter'],
             'n_snapshots': 35,
             'total_time': 80.0,
             'camera': [35, 25, 35],
@@ -249,7 +318,7 @@ def _get_configs():
             'color_mode': 'speed',
             'chart_set': 'sinter',
         },
-    ], poly_data_path
+    ]
 
 
 def run_simulation(cfg_entry):
@@ -258,7 +327,9 @@ def run_simulation(cfg_entry):
     core.register_link('LAMMPSProcess', LAMMPSProcess)
 
     t0 = _time.perf_counter()
-    proc = LAMMPSProcess(config=cfg_entry['config'], core=core)
+    proc = LAMMPSProcess(
+        config={'input_file': cfg_entry['input_file']},
+        core=core)
     state0 = proc.initial_state()
 
     interval = cfg_entry['total_time'] / cfg_entry['n_snapshots']
@@ -360,17 +431,13 @@ def generate_bigraph_image(cfg_entry):
 
 
 def build_pbg_document(cfg_entry):
-    """Build the PBG composite document dict for display."""
-    cfg = cfg_entry['config']
-    # Sanitize setup_commands for display (remove temp file paths)
-    setup_display = cfg.get('setup_commands', '')
-    if '/var/' in setup_display or '/tmp/' in setup_display:
-        import re
-        setup_display = re.sub(
-            r'read_data\s+\S+', 'read_data polymer_melt.data', setup_display)
+    """Build the PBG composite document dict for display.
+
+    Uses the .in filename (not the temp path) so the displayed doc
+    is portable.
+    """
     doc = make_lammps_document(
-        setup_commands=setup_display,
-        timestep=cfg.get('timestep', 0.005),
+        input_file=cfg_entry['input_filename'],
         interval=cfg_entry['total_time'] / cfg_entry['n_snapshots'],
     )
     return doc
@@ -382,6 +449,12 @@ COLOR_SCHEMES = {
     'rose': {'primary': '#f43f5e', 'light': '#ffe4e6', 'dark': '#e11d48'},
     'amber': {'primary': '#f59e0b', 'light': '#fef3c7', 'dark': '#d97706'},
 }
+
+
+def _escape_html(s):
+    return (s.replace('&', '&amp;')
+             .replace('<', '&lt;')
+             .replace('>', '&gt;'))
 
 
 def generate_html(sim_results, output_path):
@@ -473,6 +546,12 @@ def generate_html(sim_results, output_path):
 
         type_str = ', '.join(f'type {k}: {v}' for k, v in sorted(type_counts.items()))
 
+        # LAMMPS .in file (escaped, with line numbers)
+        in_lines = cfg['input_content'].rstrip('\n').split('\n')
+        numbered = '\n'.join(
+            f'<span class="in-line"><span class="in-ln">{i+1:>3}</span> {_escape_html(line)}</span>'
+            for i, line in enumerate(in_lines))
+
         section = f"""
     <div class="sim-section" id="sim-{sid}">
       <div class="sim-header" style="border-left: 4px solid {cs['primary']};">
@@ -492,6 +571,9 @@ def generate_html(sim_results, output_path):
         <div class="metric"><span class="metric-label">Snapshots</span><span class="metric-value">{len(snapshots)}</span></div>
         <div class="metric"><span class="metric-label">Runtime</span><span class="metric-value">{runtime:.1f}s</span></div>
       </div>
+
+      <h3 class="subsection-title">LAMMPS Input File &middot; <code class="in-fname">{cfg['input_filename']}</code></h3>
+      <div class="in-file-wrap"><pre class="in-file">{numbered}</pre></div>
 
       <h3 class="subsection-title">3D Particle Viewer</h3>
       <div class="viewer-wrap">
@@ -575,6 +657,17 @@ body {{ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-seri
 .sim-subtitle {{ font-size:.9rem; color:#64748b; }}
 .sim-description {{ color:#475569; font-size:.9rem; margin-bottom:1.5rem; max-width:800px; }}
 .subsection-title {{ font-size:1.05rem; font-weight:600; color:#334155; margin:1.5rem 0 .8rem; }}
+.in-fname {{ font-family:'SF Mono',Menlo,Monaco,'Courier New',monospace;
+             font-size:.85rem; background:#eef2ff; color:#4338ca; padding:.1rem .45rem;
+             border-radius:5px; font-weight:500; }}
+.in-file-wrap {{ background:#0f172a; border:1px solid #334155; border-radius:10px;
+                 overflow:auto; max-height:420px; margin-bottom:1rem; }}
+.in-file {{ font-family:'SF Mono',Menlo,Monaco,'Courier New',monospace;
+            font-size:.78rem; line-height:1.55; color:#cbd5e1; padding:.9rem 1rem;
+            white-space:pre; }}
+.in-line {{ display:block; }}
+.in-ln {{ display:inline-block; width:2.5em; color:#475569; user-select:none;
+          margin-right:.7rem; text-align:right; }}
 .metrics-row {{ display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:.8rem; margin-bottom:1.5rem; }}
 .metric {{ background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:.8rem; text-align:center; }}
 .metric-label {{ display:block; font-size:.7rem; text-transform:uppercase; letter-spacing:.06em; color:#94a3b8; margin-bottom:.2rem; }}
@@ -632,8 +725,8 @@ body {{ font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-seri
 <div class="page-header">
   <h1>LAMMPS Molecular Dynamics Report</h1>
   <p>Four canonical molecular dynamics simulations wrapped as <strong>process-bigraph</strong>
-  Processes using the LAMMPS engine — phase separation, polymer dynamics, interfacial
-  thermodynamics, and nanoscale sintering.</p>
+  Processes using the LAMMPS engine. Each simulation is driven by a standard
+  LAMMPS <code>.in</code> input file (shown inline below).</p>
 </div>
 
 <div class="nav">{nav_items}</div>
@@ -978,26 +1071,30 @@ Object.keys(DATA).forEach(sid => {{
 
 
 def run_demo():
+    import shutil
     import subprocess
     demo_dir = os.path.dirname(os.path.abspath(__file__))
     output_path = os.path.join(demo_dir, 'report.html')
 
-    configs, poly_data_path = _get_configs()
+    workdir = tempfile.mkdtemp(prefix='pbg_lammps_demo_')
+    print(f'LAMMPS input files written to: {workdir}')
 
-    sim_results = []
-    for cfg in configs:
-        print(f'Running: {cfg["title"]}...')
-        snapshots, runtime = run_simulation(cfg)
-        sim_results.append((cfg, (snapshots, runtime)))
-        print(f'  Runtime: {runtime:.2f}s')
-        print(f'  {len(snapshots)} snapshots, {snapshots[0]["num_atoms"]} atoms')
+    try:
+        input_paths, input_contents = _materialize_inputs(workdir)
+        configs = _get_configs(input_paths, input_contents)
 
-    # Clean up temp polymer data file
-    if os.path.exists(poly_data_path):
-        os.unlink(poly_data_path)
+        sim_results = []
+        for cfg in configs:
+            print(f'Running: {cfg["title"]}...')
+            snapshots, runtime = run_simulation(cfg)
+            sim_results.append((cfg, (snapshots, runtime)))
+            print(f'  Runtime: {runtime:.2f}s')
+            print(f'  {len(snapshots)} snapshots, {snapshots[0]["num_atoms"]} atoms')
 
-    print('Generating HTML report...')
-    generate_html(sim_results, output_path)
+        print('Generating HTML report...')
+        generate_html(sim_results, output_path)
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
 
     subprocess.run(['open', '-a', 'Safari', output_path])
 
