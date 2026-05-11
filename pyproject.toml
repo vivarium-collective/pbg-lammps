@@ -11,13 +11,21 @@ requires-python = ">=3.9"
 dependencies = [
     "process-bigraph>=0.0.10",
     "bigraph-schema",
+    "pbg-superpowers",
     "lammps",
     "numpy",
     "matplotlib",
+    "pyyaml",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "bigraph-viz"]
+
+[tool.uv.sources]
+pbg-superpowers = { git = "https://github.com/vivarium-collective/pbg-superpowers.git", branch = "main" }
 
 [tool.setuptools.packages.find]
 include = ["pbg_lammps*"]
+
+[tool.setuptools.package-data]
+"pbg_lammps.composites" = ["*.composite.yaml"]
