@@ -9,3 +9,5 @@ demo/*.png
 output/
 *.nc
 .idea/
+
+.claude/settings.local.json
