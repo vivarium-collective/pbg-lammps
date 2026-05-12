@@ -1,5 +1,6 @@
 name: lj-nve-demo-with-viz
 description: "LAMMPS LJ NVE demo with a wired Visualization Step. Each update produces a Plotly HTML figure of the running thermodynamic trajectories, written to the 'viz_html' store."
+tags: [lammps, molecular-dynamics, demo, visualization]
 
 requires:
   processes: [LAMMPSProcess, LAMMPSThermoPlots, RAMEmitter]

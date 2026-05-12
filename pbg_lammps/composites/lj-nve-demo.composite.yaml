@@ -1,5 +1,6 @@
 name: lj-nve-demo
 description: "Tiny LAMMPS Lennard-Jones NVE demo: 27 atoms on a simple-cubic lattice, integrated with `fix nve`. Emits temperature, potential_energy, kinetic_energy, total_energy, pressure, and volume each step."
+tags: [lammps, molecular-dynamics, demo]
 
 requires:
   processes: [LAMMPSProcess, RAMEmitter]
